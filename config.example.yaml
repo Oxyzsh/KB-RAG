@@ -1,0 +1,18 @@
+embedding:
+  base_url: http://localhost:11434
+  model: bge-m3
+  batch_size: 16
+
+llm:
+  base_url: https://api.deepseek.com/v1
+  model: deepseek-chat
+
+chunk:
+  size: 500        # 字符数
+  overlap: 80
+
+store:
+  path: ./data/KB-RAG.db
+
+log:
+  file: ./data/logs/KB-RAG.log

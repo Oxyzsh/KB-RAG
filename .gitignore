@@ -1,0 +1,4 @@
+/data/
+/config.yaml
+*.exe
+coverage.out
