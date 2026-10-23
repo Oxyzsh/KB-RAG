@@ -124,7 +124,7 @@ func runIngest(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	fmt.Fprintf(stdout, "入库完成：成功 %d，跳过 %d，失败 %d\n", summary.Succeeded, summary.Skipped, summary.Failed)
 	if summary.Failed > 0 {
-		fmt.Fprintln(stdout, "失败文件：")
+		fmt.Fprintln(stdout, "失败路径：")
 		for _, path := range summary.FailedPaths {
 			fmt.Fprintf(stdout, "  - %s\n", path)
 		}

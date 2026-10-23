@@ -194,6 +194,24 @@ log:
 	}
 }
 
+func TestStatsInterrupted(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeFile(t, cfgPath, fmt.Sprintf(`store:
+  path: %s
+log:
+  file: %s
+`, filepath.ToSlash(filepath.Join(dir, "kb.db")), filepath.ToSlash(filepath.Join(dir, "app.log"))))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr strings.Builder
+	code := cli.Run(ctx, []string{"stats", "--config", cfgPath}, &stdout, &stderr)
+	if code != 130 {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
 func TestUsage(t *testing.T) {
 	var stdout, stderr strings.Builder
 	if code := cli.Run(context.Background(), nil, &stdout, &stderr); code != 2 {

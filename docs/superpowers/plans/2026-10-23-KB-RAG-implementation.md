@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **实施状态（2026-10-23）：** 13 个任务已完成并提交；代码审查发现的问题已修复（提交 `b90fda4`）。真实 Ollama、云端接口冒烟与 20-30 条人工评测尚未执行，因此第一期验收尚未完成。
+
 **Goal:** 实现一个可本地运行的 KB-RAG CLI：`ingest` 把 Markdown/TXT/DOCX/PDF 解析、切分、经 Ollama 嵌入后存入 SQLite；`ask` 检索 top-k 并调用 OpenAI 兼容接口生成带引用的中文答案；`stats` 展示知识库状态。
 
 **Architecture:** 单进程 CLI，按设计文档的管道式分层：loader → chunker → embedder → store → query → llm。每个组件通过窄接口连接，存储层用 SQLite + 内存点积，第一期不做任何服务化。
@@ -111,7 +113,7 @@ func DisplayPath(path, baseDir string) string
 - Consumes: 无
 - Produces: `config.Config`、`config.Load(path) (*Config, error)`、`(*Config).Validate(command string) error`、`Config.APIKey`
 
-- [ ] **Step 1: 初始化仓库与模块**
+- [x] **Step 1: 初始化仓库与模块**
 
 ```bash
 cd /c/workspace/go/src/KB-RAG
@@ -122,7 +124,7 @@ go get gopkg.in/yaml.v3@v3.0.1
 
 Expected: `go.mod` 出现 `module kb-rag` 和 `go 1.26.5`。
 
-- [ ] **Step 2: 写 `.gitignore` 与 `.gitattributes`**
+- [x] **Step 2: 写 `.gitignore` 与 `.gitattributes`**
 
 `.gitignore`：
 
@@ -139,7 +141,7 @@ coverage.out
 * text=auto eol=lf
 ```
 
-- [ ] **Step 3: 写失败测试 `internal/config/config_test.go`**
+- [x] **Step 3: 写失败测试 `internal/config/config_test.go`**
 
 ```go
 package config
@@ -242,7 +244,7 @@ func TestValidateOK(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认失败**
+- [x] **Step 4: 运行测试确认失败**
 
 ```bash
 go test ./internal/config -run TestLoadDefaultsAndEnv -v
@@ -250,7 +252,7 @@ go test ./internal/config -run TestLoadDefaultsAndEnv -v
 
 Expected: FAIL（`undefined: Load`）。
 
-- [ ] **Step 5: 实现 `internal/config/config.go`**
+- [x] **Step 5: 实现 `internal/config/config.go`**
 
 ```go
 package config
@@ -378,7 +380,7 @@ func ensureDir(dir string) error {
 }
 ```
 
-- [ ] **Step 6: 运行测试确认通过**
+- [x] **Step 6: 运行测试确认通过**
 
 ```bash
 go test ./internal/config -v
@@ -386,7 +388,7 @@ go test ./internal/config -v
 
 Expected: PASS（3 个测试函数全部通过）。
 
-- [ ] **Step 7: 写 `config.example.yaml`**
+- [x] **Step 7: 写 `config.example.yaml`**
 
 ```yaml
 embedding:
@@ -409,7 +411,7 @@ log:
   file: ./data/logs/KB-RAG.log
 ```
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 gofmt -w internal/config
@@ -430,13 +432,13 @@ git commit -m "chore: 初始化 Go 模块与配置加载"
 - Consumes: `config.LogConfig`
 - Produces: `logging.New(cfg config.LogConfig, command string, stderr io.Writer) (*slog.Logger, io.Closer, error)`
 
-- [ ] **Step 1: 添加依赖**
+- [x] **Step 1: 添加依赖**
 
 ```bash
 go get gopkg.in/natefinch/lumberjack.v2@v2.2.1
 ```
 
-- [ ] **Step 2: 写失败测试 `internal/logging/logging_test.go`**
+- [x] **Step 2: 写失败测试 `internal/logging/logging_test.go`**
 
 ```go
 package logging
@@ -481,7 +483,7 @@ func TestNewWritesToStderrAndFile(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: 运行测试确认失败**
+- [x] **Step 3: 运行测试确认失败**
 
 ```bash
 go test ./internal/logging -v
@@ -489,7 +491,7 @@ go test ./internal/logging -v
 
 Expected: FAIL（`undefined: New`）。
 
-- [ ] **Step 4: 实现 `internal/logging/logging.go`**
+- [x] **Step 4: 实现 `internal/logging/logging.go`**
 
 ```go
 package logging
@@ -520,7 +522,7 @@ func New(cfg config.LogConfig, command string, stderr io.Writer) (*slog.Logger, 
 }
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 ```bash
 go test ./internal/logging -v
@@ -528,7 +530,7 @@ go test ./internal/logging -v
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 gofmt -w internal/logging
@@ -550,13 +552,13 @@ git commit -m "feat: 增加日志落盘与轮转"
 - Consumes: 无
 - Produces: `loader.Block{Level int; Text string}`、`loader.Document{Path, Title, Format string; Blocks []Block}`、`loader.Load(path) (Document, error)`、`loader.Supported(path) bool`、`loader.fallbackTitle(path) string`、`loader.firstTitle(blocks, path) string`、`loader.splitPlainText(s string) []string`
 
-- [ ] **Step 1: 添加依赖**
+- [x] **Step 1: 添加依赖**
 
 ```bash
 go get github.com/yuin/goldmark golang.org/x/text
 ```
 
-- [ ] **Step 2: 写失败测试 `internal/ingest/loader/text_test.go`**
+- [x] **Step 2: 写失败测试 `internal/ingest/loader/text_test.go`**
 
 ```go
 package loader
@@ -672,7 +674,7 @@ func TestUnsupportedFormat(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: 运行测试确认失败**
+- [x] **Step 3: 运行测试确认失败**
 
 ```bash
 go test ./internal/ingest/loader -v
@@ -680,7 +682,7 @@ go test ./internal/ingest/loader -v
 
 Expected: FAIL（`undefined: Load`）。
 
-- [ ] **Step 4: 实现 `internal/ingest/loader/loader.go`**
+- [x] **Step 4: 实现 `internal/ingest/loader/loader.go`**
 
 ```go
 package loader
@@ -737,7 +739,7 @@ func firstTitle(blocks []Block, path string) string {
 }
 ```
 
-- [ ] **Step 5: 实现 `internal/ingest/loader/text.go`**
+- [x] **Step 5: 实现 `internal/ingest/loader/text.go`**
 
 ```go
 package loader
@@ -848,7 +850,7 @@ func appendCodeBlock(blocks []Block, lines *text.Segments, src []byte) []Block {
 }
 ```
 
-- [ ] **Step 6: 运行测试确认通过**
+- [x] **Step 6: 运行测试确认通过**
 
 ```bash
 go test ./internal/ingest/loader -run 'TestSupported|TestLoadMarkdown|TestLoadTXT|TestLoadGB18030|TestUnsupportedFormat' -v
@@ -856,7 +858,7 @@ go test ./internal/ingest/loader -run 'TestSupported|TestLoadMarkdown|TestLoadTX
 
 Expected: PASS（5 个测试）。Task 4 与 Task 5 会分别向 `Load` 的 switch 增加 `.docx`、`.pdf` 分支。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 gofmt -w internal/ingest/loader
@@ -877,7 +879,7 @@ git commit -m "feat: 增加 TXT/Markdown 解析"
 - Consumes: `Block`、`Document`、`firstTitle`
 - Produces: `loadDOCX(path string) (Document, error)`
 
-- [ ] **Step 1: 写失败测试 `internal/ingest/loader/docx_test.go`**
+- [x] **Step 1: 写失败测试 `internal/ingest/loader/docx_test.go`**
 
 ```go
 package loader
@@ -967,7 +969,7 @@ func TestLoadDOCXInvalidZip(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go test ./internal/ingest/loader -run TestLoadDOCX -v
@@ -975,7 +977,7 @@ go test ./internal/ingest/loader -run TestLoadDOCX -v
 
 Expected: FAIL（`undefined: loadDOCX` 或编译失败）。
 
-- [ ] **Step 3: 实现 `internal/ingest/loader/docx.go`**
+- [x] **Step 3: 实现 `internal/ingest/loader/docx.go`**
 
 ```go
 package loader
@@ -1200,7 +1202,7 @@ func loadDOCX(path string) (Document, error) {
 }
 ```
 
-- [ ] **Step 4: 在 `loader.go` 注册 DOCX 分支**
+- [x] **Step 4: 在 `loader.go` 注册 DOCX 分支**
 
 把 `Load` 的 switch 改为：
 
@@ -1219,7 +1221,7 @@ func Load(path string) (Document, error) {
 }
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 ```bash
 go test ./internal/ingest/loader -run TestLoadDOCX -v
@@ -1227,7 +1229,7 @@ go test ./internal/ingest/loader -run TestLoadDOCX -v
 
 Expected: PASS（两个 DOCX 测试通过）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 gofmt -w internal/ingest/loader
@@ -1252,13 +1254,13 @@ git commit -m "feat: 增加 DOCX 解析"
 - Consumes: `Block`、`Document`、`firstTitle`、`splitPlainText`
 - Produces: `loadPDF(path string) (Document, error)`
 
-- [ ] **Step 1: 添加依赖**
+- [x] **Step 1: 添加依赖**
 
 ```bash
 go get github.com/ledongthuc/pdf@v0.0.0-20261020125853-5e46805f718e
 ```
 
-- [ ] **Step 2: 生成中文 PDF 测试夹具**
+- [x] **Step 2: 生成中文 PDF 测试夹具**
 
 在项目外的临时目录生成，随后删除临时模块：
 
@@ -1310,7 +1312,7 @@ ls -l internal/ingest/loader/testdata/sample_zh.pdf
 
 Expected: 文件存在，大小约 10KB。
 
-- [ ] **Step 3: 写失败测试 `internal/ingest/loader/pdf_test.go`**
+- [x] **Step 3: 写失败测试 `internal/ingest/loader/pdf_test.go`**
 
 ```go
 package loader
@@ -1344,7 +1346,7 @@ func TestLoadPDFChinese(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认失败**
+- [x] **Step 4: 运行测试确认失败**
 
 ```bash
 go test ./internal/ingest/loader -run TestLoadPDFChinese -v
@@ -1352,7 +1354,7 @@ go test ./internal/ingest/loader -run TestLoadPDFChinese -v
 
 Expected: FAIL（`undefined: loadPDF`）。
 
-- [ ] **Step 5: 实现 `internal/ingest/loader/pdf.go`**
+- [x] **Step 5: 实现 `internal/ingest/loader/pdf.go`**
 
 ```go
 package loader
@@ -1394,7 +1396,7 @@ func loadPDF(path string) (Document, error) {
 }
 ```
 
-- [ ] **Step 6: 在 `loader.go` 注册 PDF 分支**
+- [x] **Step 6: 在 `loader.go` 注册 PDF 分支**
 
 把 `Load` 的 switch 改为：
 
@@ -1415,7 +1417,7 @@ func Load(path string) (Document, error) {
 }
 ```
 
-- [ ] **Step 7: 运行测试确认通过**
+- [x] **Step 7: 运行测试确认通过**
 
 ```bash
 go test ./internal/ingest/loader -run TestLoadPDFChinese -v
@@ -1423,7 +1425,7 @@ go test ./internal/ingest/loader -run TestLoadPDFChinese -v
 
 Expected: PASS。若出现乱码或断言失败，停止并报告提取结果，不继续后续任务；根据用户提供的真实 PDF 样本再决定是否新增 `pdftotext` loader。
 
-- [ ] **Step 8: 运行 loader 全部测试**
+- [x] **Step 8: 运行 loader 全部测试**
 
 ```bash
 go test ./internal/ingest/loader -v
@@ -1431,7 +1433,7 @@ go test ./internal/ingest/loader -v
 
 Expected: 全部 PASS（含 Task 3、Task 4 的测试）。
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 gofmt -w internal/ingest/loader
@@ -1452,7 +1454,7 @@ git commit -m "feat: 增加 PDF 中文解析"
 - Consumes: `loader.Document`、`loader.Block`
 - Produces: `chunker.Chunk{Seq int; Heading, Text string}`、`chunker.Split(doc loader.Document, size, overlap int) []Chunk`
 
-- [ ] **Step 1: 写失败测试 `internal/ingest/chunker/chunker_test.go`**
+- [x] **Step 1: 写失败测试 `internal/ingest/chunker/chunker_test.go`**
 
 ```go
 package chunker
@@ -1540,7 +1542,7 @@ func TestInvalidParams(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go test ./internal/ingest/chunker -v
@@ -1548,7 +1550,7 @@ go test ./internal/ingest/chunker -v
 
 Expected: FAIL（`undefined: Split`）。
 
-- [ ] **Step 3: 实现 `internal/ingest/chunker/chunker.go`**
+- [x] **Step 3: 实现 `internal/ingest/chunker/chunker.go`**
 
 ```go
 package chunker
@@ -1675,7 +1677,7 @@ func lastSentenceCut(runes []rune, start, end int) int {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 ```bash
 go test ./internal/ingest/chunker -v
@@ -1683,7 +1685,7 @@ go test ./internal/ingest/chunker -v
 
 Expected: PASS（5 个测试函数）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 gofmt -w internal/ingest/chunker
@@ -1704,7 +1706,7 @@ git commit -m "feat: 增加结构感知切分"
 - Consumes: 无
 - Produces: `embedder.Embedder` 接口、`embedder.New(baseURL, model string, batchSize int) *Ollama`、`(*Ollama).Embed(ctx, texts []string) ([][]float32, error)`
 
-- [ ] **Step 1: 写失败测试 `internal/ingest/embedder/ollama_test.go`**
+- [x] **Step 1: 写失败测试 `internal/ingest/embedder/ollama_test.go`**
 
 ```go
 package embedder
@@ -1807,7 +1809,7 @@ func TestEmbedRejectsDimensionMismatch(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go test ./internal/ingest/embedder -v
@@ -1815,7 +1817,7 @@ go test ./internal/ingest/embedder -v
 
 Expected: FAIL（`undefined: New`）。
 
-- [ ] **Step 3: 实现 `internal/ingest/embedder/ollama.go`**
+- [x] **Step 3: 实现 `internal/ingest/embedder/ollama.go`**
 
 ```go
 package embedder
@@ -1946,7 +1948,7 @@ func (o *Ollama) embedBatch(ctx context.Context, batch []string) ([][]float32, e
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 ```bash
 go test ./internal/ingest/embedder -v
@@ -1954,7 +1956,7 @@ go test ./internal/ingest/embedder -v
 
 Expected: PASS（4 个测试）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 gofmt -w internal/ingest/embedder
@@ -1986,7 +1988,7 @@ git commit -m "feat: 增加 Ollama 嵌入客户端"
   - `(*Store).Stats(ctx) (Stats, error)`
   - 类型：`EmbeddingMeta`、`DocumentInfo`、`ChunkInput`、`Hit`、`Stats`
 
-- [ ] **Step 1: 添加依赖并写失败测试 `internal/store/store_test.go`**
+- [x] **Step 1: 添加依赖并写失败测试 `internal/store/store_test.go`**
 
 ```bash
 go get modernc.org/sqlite@v1.47.0
@@ -2207,7 +2209,7 @@ func TestSearchOnEmptyStore(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go test ./internal/store -v
@@ -2215,7 +2217,7 @@ go test ./internal/store -v
 
 Expected: FAIL（`undefined: Open`）。
 
-- [ ] **Step 3: 实现 `internal/store/store.go`**
+- [x] **Step 3: 实现 `internal/store/store.go`**
 
 ```go
 package store
@@ -2682,7 +2684,7 @@ func normalize(vector []float32) []float32 {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 ```bash
 go test ./internal/store -v
@@ -2690,7 +2692,7 @@ go test ./internal/store -v
 
 Expected: PASS（6 个测试）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 gofmt -w internal/store
@@ -2711,7 +2713,7 @@ git commit -m "feat: 增加 SQLite 存储与向量检索"
 - Consumes: 无
 - Produces: `llm.Message{Role, Content string}`、`llm.New(baseURL, model, apiKey string) *Client`、`(*Client).Chat(ctx, messages []Message) (string, error)`
 
-- [ ] **Step 1: 写失败测试 `internal/llm/client_test.go`**
+- [x] **Step 1: 写失败测试 `internal/llm/client_test.go`**
 
 ```go
 package llm
@@ -2800,7 +2802,7 @@ func TestChatErrorMessageDoesNotLeakKey(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go test ./internal/llm -v
@@ -2808,7 +2810,7 @@ go test ./internal/llm -v
 
 Expected: FAIL（`undefined: New`）。
 
-- [ ] **Step 3: 实现 `internal/llm/client.go`**
+- [x] **Step 3: 实现 `internal/llm/client.go`**
 
 ```go
 package llm
@@ -2898,7 +2900,7 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 ```bash
 go test ./internal/llm -v
@@ -2906,7 +2908,7 @@ go test ./internal/llm -v
 
 Expected: PASS（4 个测试）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 gofmt -w internal/llm
@@ -2927,7 +2929,7 @@ git commit -m "feat: 增加 OpenAI 兼容生成客户端"
 - Consumes: `store`、`llm`
 - Produces: `query.Service`、`(*Service).Ask(ctx, question) (Result, error)`、`query.FormatResult`、`query.FormatHits`、`query.DisplayPath`
 
-- [ ] **Step 1: 写失败测试 `internal/query/query_test.go`**
+- [x] **Step 1: 写失败测试 `internal/query/query_test.go`**
 
 ```go
 package query
@@ -3087,7 +3089,7 @@ func TestFormatResult(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go test ./internal/query -v
@@ -3095,7 +3097,7 @@ go test ./internal/query -v
 
 Expected: FAIL（`undefined: Service`）。
 
-- [ ] **Step 3: 实现 `internal/query/query.go`**
+- [x] **Step 3: 实现 `internal/query/query.go`**
 
 ```go
 package query
@@ -3258,7 +3260,7 @@ func DisplayPath(path, baseDir string) string {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 ```bash
 go test ./internal/query -v
@@ -3266,7 +3268,7 @@ go test ./internal/query -v
 
 Expected: PASS（6 个测试）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 gofmt -w internal/query
@@ -3287,7 +3289,7 @@ git commit -m "feat: 增加检索与引用编排"
 - Consumes: `loader`、`chunker`、`store`
 - Produces: `ingest.Run(ctx, root string, st Store, emb Embedder, opt Options) (Summary, error)`、`ingest.Options`、`ingest.Summary`
 
-- [ ] **Step 1: 写失败测试 `internal/ingest/ingest_test.go`**
+- [x] **Step 1: 写失败测试 `internal/ingest/ingest_test.go`**
 
 ```go
 package ingest
@@ -3431,7 +3433,7 @@ func TestRunBadDocumentDoesNotBlockOthers(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 go test ./internal/ingest -run TestRun -v
@@ -3439,7 +3441,7 @@ go test ./internal/ingest -run TestRun -v
 
 Expected: FAIL（`undefined: Run`）。
 
-- [ ] **Step 3: 实现 `internal/ingest/ingest.go`**
+- [x] **Step 3: 实现 `internal/ingest/ingest.go`**
 
 ```go
 package ingest
@@ -3670,7 +3672,7 @@ func markFailed(ctx context.Context, st Store, opt Options, path, title, hash, m
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 ```bash
 go test ./internal/ingest -v
@@ -3678,7 +3680,7 @@ go test ./internal/ingest -v
 
 Expected: PASS（3 个测试）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 gofmt -w internal/ingest
@@ -3700,7 +3702,7 @@ git commit -m "feat: 增加增量入库管道"
 - Consumes: 上述全部组件
 - Produces: `cli.Run(ctx context.Context, args []string, stdout, stderr io.Writer) int`、可执行文件 `KB-RAG`
 
-- [ ] **Step 1: 实现 `cmd/KB-RAG/main.go`**
+- [x] **Step 1: 实现 `cmd/KB-RAG/main.go`**
 
 ```go
 package main
@@ -3720,7 +3722,7 @@ func main() {
 }
 ```
 
-- [ ] **Step 2: 实现 `internal/cli/cli.go`**
+- [x] **Step 2: 实现 `internal/cli/cli.go`**
 
 ```go
 package cli
@@ -3988,7 +3990,7 @@ func runStats(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 }
 ```
 
-- [ ] **Step 3: 写集成测试 `internal/cli/cli_test.go`**
+- [x] **Step 3: 写集成测试 `internal/cli/cli_test.go`**
 
 ```go
 package cli_test
@@ -4198,7 +4200,7 @@ func TestUsage(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: 运行集成测试**
+- [x] **Step 4: 运行集成测试**
 
 ```bash
 go test ./internal/cli -v
@@ -4206,7 +4208,7 @@ go test ./internal/cli -v
 
 Expected: PASS（3 个测试）。若失败，先修实现，不得跳过。
 
-- [ ] **Step 5: 构建并验证 CLI 帮助**
+- [x] **Step 5: 构建并验证 CLI 帮助**
 
 ```bash
 go build -o KB-RAG.exe ./cmd/KB-RAG
@@ -4215,7 +4217,7 @@ go build -o KB-RAG.exe ./cmd/KB-RAG
 
 Expected: 打印三条用法，退出码 0。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 gofmt -w cmd internal/cli
@@ -4236,7 +4238,7 @@ git commit -m "feat: 完成 ingest/ask/stats CLI"
 - Consumes: 全部
 - Produces: 使用说明与评测模板
 
-- [ ] **Step 1: 写 `README.md`**
+- [x] **Step 1: 写 `README.md`**
 
 ````markdown
 # KB-RAG
@@ -4305,7 +4307,7 @@ go vet ./...
 集成测试使用假 Ollama 与假生成服务，不需要真实网络或模型。
 ````
 
-- [ ] **Step 2: 写 `docs/eval/questions.md`**
+- [x] **Step 2: 写 `docs/eval/questions.md`**
 
 ```markdown
 # KB-RAG 人工评测
@@ -4366,7 +4368,7 @@ go vet ./...
 - 备注：
 ```
 
-- [ ] **Step 3: 全量验证**
+- [x] **Step 3: 全量验证**
 
 ```bash
 go mod tidy
@@ -4382,7 +4384,7 @@ Expected:
 - `go test ./...` 全部 PASS
 - 构建成功
 
-- [ ] **Step 4: 清理临时产物**
+- [x] **Step 4: 清理临时产物**
 
 ```bash
 rm -rf /c/workspace/go/tmp/kbrag-spike
@@ -4391,7 +4393,7 @@ git status --short
 
 Expected: 临时目录不存在；`git status` 只包含本任务的 README、评测模板与计划文档（计划文档在 Task 1 之前已存在，可单独提交）。
 
-- [ ] **Step 5: 提交文档**
+- [x] **Step 5: 提交文档**
 
 ```bash
 git add README.md docs/eval/questions.md docs/superpowers/plans/2026-10-23-KB-RAG-implementation.md go.mod go.sum
@@ -4456,6 +4458,7 @@ export KB_RAG_LLM_API_KEY=...
 - `meta.chunk_size` 不一致时 `ingest` 直接报错，避免 hash 跳过后新旧切分混存；设计文档只显式要求模型/维度一致，这是为保证增量正确性增加的校验。
 - 文档更新失败时保留旧片段在库中，但 `status='failed'` 的文档不参与检索，避免把过期内容当作当前依据；下次 ingest 因状态非 `ok` 而重试。
 - `documents` 表增加 `path_key` 列（绝对路径，Windows 上折叠大小写）作为文件身份；`path` 保留展示路径。用于避免同一文件因路径大小写不同而重复入库。
+- `meta.schema_version` 提升为 `2`（因 `path_key` 列变更）；旧版本库打开时直接报错，要求删除库文件后重建。
 - `stats` 的“文档”统计总数，失败数单独展示。
 - PDF 采用 `ledongthuc/pdf`（已用真实中文 PDF 验证）；`pdftotext` 兜底仅保留为后续真实文档验证失败时的预案，第一期不实现。
 - 本项目不是 git 仓库，Task 1 会执行 `git init`；如用户不希望初始化仓库，执行前需确认。

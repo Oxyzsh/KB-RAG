@@ -163,7 +163,7 @@ func TestSchemaVersionMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE meta SET value='2' WHERE key='schema_version'`); err != nil {
+	if _, err := db.Exec(`UPDATE meta SET value='1' WHERE key='schema_version'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {

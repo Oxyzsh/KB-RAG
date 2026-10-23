@@ -9,10 +9,11 @@ import (
 
 func loadPDF(path string) (doc Document, err error) {
 	// 纯 Go PDF 库对畸形文件可能 panic；单个文件异常不得终止整个 ingest。
+	// 只记录 panic 类型，避免异常值可能携带的内容进入日志。
 	defer func() {
 		if r := recover(); r != nil {
 			doc = Document{}
-			err = fmt.Errorf("解析 PDF 发生异常: %v", r)
+			err = fmt.Errorf("解析 PDF 发生异常（%T）", r)
 		}
 	}()
 
