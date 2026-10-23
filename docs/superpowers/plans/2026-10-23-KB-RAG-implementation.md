@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **实施状态（2026-10-23）：** 13 个任务已完成并提交；代码审查发现的问题已修复（提交 `b90fda4`）。真实 Ollama、云端接口冒烟与 20-30 条人工评测尚未执行，因此第一期验收尚未完成。
+> **实施状态（2026-10-23）：** 13 个任务已完成并提交；代码审查发现的问题已修复（提交 `b90fda4`）。真实 Ollama + 云端 OpenAI 兼容网关冒烟已通过（`ingest` / `ask` / `stats` 手动验证）。20-30 条人工评测尚未执行，因此第一期验收尚未完成。
 
 **Goal:** 实现一个可本地运行的 KB-RAG CLI：`ingest` 把 Markdown/TXT/DOCX/PDF 解析、切分、经 Ollama 嵌入后存入 SQLite；`ask` 检索 top-k 并调用 OpenAI 兼容接口生成带引用的中文答案；`stats` 展示知识库状态。
 
