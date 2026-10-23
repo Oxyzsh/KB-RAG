@@ -2,6 +2,30 @@
 
 企业知识库 RAG 命令行工具。文档在本地解析、切分并存储，嵌入通过本地 Ollama 完成，答案由云端 OpenAI 兼容接口生成，并附带原文引用。
 
+## 模块文档
+
+每个模块的职责、接口、行为约定与测试说明见对应 README：
+
+| 模块 | 职责 |
+|------|------|
+| [cmd/KB-RAG](cmd/KB-RAG/README.md) | 进程入口、信号与退出码 |
+| [internal/cli](internal/cli/README.md) | 子命令解析、依赖装配、输出 |
+| [internal/config](internal/config/README.md) | YAML 配置、默认值、按命令校验 |
+| [internal/logging](internal/logging/README.md) | slog、文件轮转、日志隐私 |
+| [internal/ingest](internal/ingest/README.md) | 入库编排、增量与失败语义 |
+| [internal/ingest/loader](internal/ingest/loader/README.md) | Markdown/TXT/DOCX/PDF 解析 |
+| [internal/ingest/chunker](internal/ingest/chunker/README.md) | 结构感知切分 |
+| [internal/ingest/embedder](internal/ingest/embedder/README.md) | Ollama 嵌入客户端 |
+| [internal/store](internal/store/README.md) | SQLite 存储、事务与向量检索 |
+| [internal/llm](internal/llm/README.md) | OpenAI 兼容生成客户端 |
+| [internal/query](internal/query/README.md) | 检索编排、prompt 与引用格式化 |
+
+## 设计文档
+
+- [设计文档](docs/superpowers/specs/2026-10-23-KB-RAG-design.md)
+- [实施计划](docs/superpowers/plans/2026-10-23-KB-RAG-implementation.md)
+- [人工评测模板](docs/eval/questions.md)
+
 ## 前置条件
 
 - Go 1.26.5
