@@ -103,6 +103,20 @@ func TestLoadGB18030(t *testing.T) {
 	}
 }
 
+func TestLoadMarkdownBOM(t *testing.T) {
+	path := writeFile(t, "bom.md", []byte("\uFEFF# 人事制度\n\n年假规定：满一年五天。\n"))
+	doc, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if doc.Title != "人事制度" {
+		t.Errorf("Title = %q", doc.Title)
+	}
+	if len(doc.Blocks) == 0 || doc.Blocks[0] != (Block{Level: 1, Text: "人事制度"}) {
+		t.Errorf("Blocks = %+v", doc.Blocks)
+	}
+}
+
 func TestUnsupportedFormat(t *testing.T) {
 	path := writeFile(t, "a.doc", []byte("x"))
 	if _, err := Load(path); err == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -105,8 +106,15 @@ func TestDocumentLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hits) != 1 || hits[0].Text != "旧版本内容" {
-		t.Fatalf("更新失败后应保留旧版本可检索: %+v", hits)
+	if len(hits) != 0 {
+		t.Fatalf("失败文档不应参与检索: %+v", hits)
+	}
+	stats, err := s.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Chunks != 1 {
+		t.Fatalf("旧片段应保留在库中等待重试: %+v", stats)
 	}
 
 	if err := s.ReplaceDocument(ctx, "/docs/x.md", "X", "hash-2", []ChunkInput{
@@ -208,5 +216,71 @@ func TestSearchOnEmptyStore(t *testing.T) {
 	defer s.Close()
 	if _, err := s.Search(context.Background(), []float32{1, 0, 0}, 5); err == nil {
 		t.Fatal("空库检索应报错")
+	}
+}
+
+func TestReplaceDocumentRollsBackOnInsertError(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A", "hash-old", []ChunkInput{
+		{Seq: 0, Text: "旧内容", Vector: []float32{1, 0, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`CREATE TRIGGER fail_insert BEFORE INSERT ON chunks
+		WHEN NEW.text='boom' BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A2", "hash-new", []ChunkInput{
+		{Seq: 0, Text: "新内容", Vector: []float32{1, 0, 0}},
+		{Seq: 1, Text: "boom", Vector: []float32{0, 1, 0}},
+	}); err == nil {
+		t.Fatal("期望插入失败")
+	}
+	if _, err := s.db.Exec(`DROP TRIGGER fail_insert`); err != nil {
+		t.Fatal(err)
+	}
+	info, ok, err := s.GetDocument("/docs/a.md")
+	if err != nil || !ok || info.Status != "ok" || info.Hash != "hash-old" || info.Title != "A" {
+		t.Fatalf("事务未完整回滚: %+v, ok=%v, err=%v", info, ok, err)
+	}
+	hits, err := s.Search(ctx, []float32{1, 0, 0}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Text != "旧内容" {
+		t.Fatalf("旧片段丢失: %+v", hits)
+	}
+}
+
+func TestPathKeyCaseInsensitiveOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("仅 Windows 路径大小写不敏感")
+	}
+	s := testStore(t)
+	ctx := context.Background()
+	if err := s.ReplaceDocument(ctx, "/docs/Case.md", "Case", "h", []ChunkInput{
+		{Seq: 0, Text: "内容内容内容", Vector: []float32{1, 0, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info, ok, err := s.GetDocument("/DOCS/case.md")
+	if err != nil || !ok {
+		t.Fatalf("大小写不同应命中同一文档: ok=%v err=%v", ok, err)
+	}
+	if info.Path != "/docs/Case.md" {
+		t.Errorf("展示路径被意外改写: %q", info.Path)
+	}
+	if err := s.ReplaceDocument(ctx, "/DOCS/CASE.MD", "Case2", "h2", []ChunkInput{
+		{Seq: 0, Text: "更新后的内容", Vector: []float32{1, 0, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := s.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Documents != 1 {
+		t.Fatalf("同一文件不应重复入库: %+v", stats)
 	}
 }

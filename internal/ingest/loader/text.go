@@ -21,13 +21,13 @@ func decodeTextFile(path string) (string, error) {
 		return "", fmt.Errorf("读取文件: %w", err)
 	}
 	if utf8.Valid(raw) {
-		return string(raw), nil
+		return strings.TrimPrefix(string(raw), "\uFEFF"), nil
 	}
 	decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(raw)
 	if err != nil {
 		return "", fmt.Errorf("文本编码既不是 UTF-8 也不是 GB18030: %w", err)
 	}
-	return string(decoded), nil
+	return strings.TrimPrefix(string(decoded), "\uFEFF"), nil
 }
 
 func splitPlainText(s string) []string {

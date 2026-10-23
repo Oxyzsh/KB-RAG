@@ -9,8 +9,10 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -104,7 +106,8 @@ func (s *Store) migrate() error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS documents(
 			id INTEGER PRIMARY KEY,
-			path TEXT NOT NULL UNIQUE,
+			path TEXT NOT NULL,
+			path_key TEXT NOT NULL UNIQUE,
 			title TEXT NOT NULL DEFAULT '',
 			content_hash TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'ok',
@@ -250,7 +253,7 @@ func (s *Store) SetDim(dim int) error {
 
 func (s *Store) GetDocument(path string) (DocumentInfo, bool, error) {
 	var info DocumentInfo
-	err := s.db.QueryRow(`SELECT id,path,title,content_hash,status,error,updated_at FROM documents WHERE path=?`, path).
+	err := s.db.QueryRow(`SELECT id,path,title,content_hash,status,error,updated_at FROM documents WHERE path_key=?`, pathKey(path)).
 		Scan(&info.ID, &info.Path, &info.Title, &info.Hash, &info.Status, &info.Error, &info.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DocumentInfo{}, false, nil
@@ -282,14 +285,14 @@ func (s *Store) ReplaceDocument(ctx context.Context, path, title, hash string, c
 	defer tx.Rollback()
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO documents(path,title,content_hash,status,error,updated_at)
-		VALUES(?,?,?,'ok','',?)
-		ON CONFLICT(path) DO UPDATE SET title=excluded.title, content_hash=excluded.content_hash,
-			status='ok', error='', updated_at=excluded.updated_at`, path, title, hash, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO documents(path,path_key,title,content_hash,status,error,updated_at)
+		VALUES(?,?,?,?,'ok','',?)
+		ON CONFLICT(path_key) DO UPDATE SET path=excluded.path, title=excluded.title, content_hash=excluded.content_hash,
+			status='ok', error='', updated_at=excluded.updated_at`, path, pathKey(path), title, hash, now); err != nil {
 		return err
 	}
 	var docID int64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM documents WHERE path=?`, path).Scan(&docID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM documents WHERE path_key=?`, pathKey(path)).Scan(&docID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE doc_id=?`, docID); err != nil {
@@ -310,10 +313,10 @@ func (s *Store) ReplaceDocument(ctx context.Context, path, title, hash string, c
 
 func (s *Store) MarkFailed(ctx context.Context, path, title, hash, msg string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO documents(path,title,content_hash,status,error,updated_at)
-		VALUES(?,?,?,'failed',?,?)
-		ON CONFLICT(path) DO UPDATE SET title=excluded.title, content_hash=excluded.content_hash,
-			status='failed', error=excluded.error, updated_at=excluded.updated_at`, path, title, hash, msg, now)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO documents(path,path_key,title,content_hash,status,error,updated_at)
+		VALUES(?,?,?,?,'failed',?,?)
+		ON CONFLICT(path_key) DO UPDATE SET path=excluded.path, title=excluded.title, content_hash=excluded.content_hash,
+			status='failed', error=excluded.error, updated_at=excluded.updated_at`, path, pathKey(path), title, hash, msg, now)
 	return err
 }
 
@@ -333,7 +336,7 @@ func (s *Store) Search(ctx context.Context, query []float32, topK int) ([]Hit, e
 	}
 	q := normalize(query)
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.doc_id,c.heading,c.text,c.vector,c.dim,d.path,d.title
-		FROM chunks c JOIN documents d ON d.id=c.doc_id`)
+		FROM chunks c JOIN documents d ON d.id=c.doc_id WHERE d.status='ok'`)
 	if err != nil {
 		return nil, err
 	}
@@ -423,6 +426,19 @@ func (s *Store) dim() (int, error) {
 		return 0, err
 	}
 	return meta.Dim, nil
+}
+
+// pathKey 是文件身份：绝对路径在 Windows 上折叠大小写，避免同一文件重复入库。
+// 展示路径仍保存在 documents.path 中，保持用户传入的原始大小写。
+func pathKey(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	path = filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		path = strings.ToLower(path)
+	}
+	return path
 }
 
 func encodeVector(vector []float32) []byte {

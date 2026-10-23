@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -94,5 +95,22 @@ func TestEmbedRejectsDimensionMismatch(t *testing.T) {
 	o.retryDelay = time.Millisecond
 	if _, err := o.Embed(context.Background(), []string{"a", "b"}); err == nil {
 		t.Fatal("期望维度不一致报错")
+	}
+}
+
+func TestEmbedErrorDoesNotEchoResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "secret document text", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	o := New(server.URL, "m", 1)
+	o.retryDelay = time.Millisecond
+	_, err := o.Embed(context.Background(), []string{"a"})
+	if err == nil {
+		t.Fatal("期望错误")
+	}
+	if strings.Contains(err.Error(), "secret document text") {
+		t.Fatal("错误信息回显了响应体")
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -112,8 +111,8 @@ func (o *Ollama) embedBatch(ctx context.Context, batch []string) ([][]float32, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("Ollama 返回 %s: %s", resp.Status, strings.TrimSpace(string(detail)))
+		// 不拼接响应体：服务端可能回显输入文本，导致文档正文落日志。
+		return nil, fmt.Errorf("Ollama 返回 %s", resp.Status)
 	}
 	var decoded embedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {

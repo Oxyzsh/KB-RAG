@@ -82,3 +82,18 @@ func TestChatErrorMessageDoesNotLeakKey(t *testing.T) {
 		t.Fatal("错误信息泄露 API Key")
 	}
 }
+
+func TestChatErrorDoesNotEchoResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "document text and question", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client := New(server.URL, "m", "k")
+	_, err := client.Chat(context.Background(), []Message{{Role: "user", Content: "q"}})
+	if err == nil {
+		t.Fatal("期望错误")
+	}
+	if strings.Contains(err.Error(), "document text") {
+		t.Fatal("错误信息回显了响应体")
+	}
+}

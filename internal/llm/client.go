@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -67,8 +66,8 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("生成服务返回 %s: %s", resp.Status, strings.TrimSpace(string(detail)))
+		// 不拼接响应体：兼容服务或调试网关可能回显请求内容，导致问题原文落日志。
+		return "", fmt.Errorf("生成服务返回 %s", resp.Status)
 	}
 	var decoded chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {

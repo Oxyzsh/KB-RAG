@@ -236,6 +236,9 @@ func runStats(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	stats, err := st.Stats(ctx)
 	if err != nil {
 		logger.Error("读取统计失败", "error", err)
+		if interrupted(ctx) {
+			return exitInterrupted
+		}
 		return exitRuntime
 	}
 	fmt.Fprintf(stdout, "文档：%d（失败 %d）\n", stats.Documents, stats.DocumentsFailed)

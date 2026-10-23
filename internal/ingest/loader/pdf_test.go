@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+func TestLoadPDFCorrupt(t *testing.T) {
+	path := writeFile(t, "bad.pdf", []byte("%PDF-1.4\nthis is not a valid pdf"))
+	if _, err := Load(path); err == nil {
+		t.Fatal("期望损坏 PDF 报错而不是 panic")
+	}
+}
+
 func TestLoadPDFChinese(t *testing.T) {
 	doc, err := Load("testdata/sample_zh.pdf")
 	if err != nil {

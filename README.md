@@ -47,10 +47,12 @@ go build -o KB-RAG.exe ./cmd/KB-RAG
 
 运行时数据默认写入 `./data/`，不提交到版本库。
 
+`--top-k` 等 flag 必须写在问题之前（Go `flag` 在第一个位置参数处停止解析）。
+
 ## 已知限制
 
 - 扫描件 PDF 不做 OCR。
-- PDF 使用纯 Go 库提取文本；若真实业务 PDF 出现乱码，可改用 `pdftotext` 兜底（需安装 poppler）。
+- PDF 使用纯 Go 库提取文本。第一期未实现 `pdftotext` 兜底；若真实业务 PDF 出现乱码，需要后续增加该 loader（依赖 poppler）。
 - 检索为内存暴力点积，适合小规模知识库；片段超过 20 万时 `stats` 会提示迁移。
 - 第一期不做重排、混合检索、query rewrite、多轮对话与流式输出。
 
