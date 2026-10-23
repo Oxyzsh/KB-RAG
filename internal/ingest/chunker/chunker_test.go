@@ -1,6 +1,7 @@
 package chunker
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -73,6 +74,88 @@ func TestDropFragments(t *testing.T) {
 	chunks := Split(doc(loader.Block{Text: "短"}), 500, 80)
 	if len(chunks) != 0 {
 		t.Fatalf("碎片未被丢弃: %+v", chunks)
+	}
+}
+
+func TestTableKeptIntact(t *testing.T) {
+	table := strings.Join([]string{
+		"| # | 动作 | 说明 |",
+		"|---|---|---|",
+		"| 1 | 发消息总线 | topic=alarm |",
+		"| 2 | 推园区平台 | yqpt.SendAlarm |",
+		"| 3 | 记活动状态 | activeTracker |",
+	}, "\n")
+	chunks := Split(doc(
+		loader.Block{Level: 1, Text: "告警"},
+		loader.Block{Text: table},
+	), 500, 80)
+	if len(chunks) != 1 {
+		t.Fatalf("表格应保持完整: %+v", chunks)
+	}
+	if chunks[0].Heading != "告警" {
+		t.Errorf("Heading = %q", chunks[0].Heading)
+	}
+	if !strings.HasPrefix(chunks[0].Text, "| # | 动作 | 说明 |") {
+		t.Errorf("表格缺少表头: %q", chunks[0].Text)
+	}
+	if !strings.Contains(chunks[0].Text, "| 3 | 记活动状态 | activeTracker |") {
+		t.Errorf("表格末行丢失: %q", chunks[0].Text)
+	}
+}
+
+func TestLargeTableRepeatsHeader(t *testing.T) {
+	rows := []string{"| # | 动作 | 说明 |", "|---|---|---|"}
+	for i := 1; i <= 10; i++ {
+		rows = append(rows, fmt.Sprintf("| %d | 动作%d | 这是一段较长的说明文字，用于确保表格超过片段上限 |", i, i))
+	}
+	chunks := Split(doc(loader.Block{Text: strings.Join(rows, "\n")}), 120, 20)
+	if len(chunks) < 2 {
+		t.Fatalf("大表格应拆成多个片段: %+v", chunks)
+	}
+	for i, c := range chunks {
+		if !strings.HasPrefix(c.Text, "| # | 动作 | 说明 |\n|---|---|---|") {
+			t.Errorf("片段 %d 未重复表头: %q", i, c.Text)
+		}
+	}
+	for i := 1; i <= 10; i++ {
+		needle := fmt.Sprintf("| %d | 动作%d |", i, i)
+		count := 0
+		for _, c := range chunks {
+			count += strings.Count(c.Text, needle)
+		}
+		if count != 1 {
+			t.Errorf("第 %d 行出现 %d 次，期望 1 次", i, count)
+		}
+	}
+}
+
+func TestTableSeparatedFromParagraphs(t *testing.T) {
+	table := strings.Join([]string{
+		"| 步骤 | 说明 |",
+		"|---|---|",
+		"| 1 | 解析报文 |",
+		"| 2 | 去重 |",
+	}, "\n")
+	chunks := Split(doc(
+		loader.Block{Level: 1, Text: "消费"},
+		loader.Block{Text: "表格前的说明文字，足够长足够长。"},
+		loader.Block{Text: table},
+		loader.Block{Text: "表格后的说明文字，足够长足够长。"},
+	), 500, 80)
+	if len(chunks) != 3 {
+		t.Fatalf("表格应与前后段落分开: %+v", chunks)
+	}
+	found := false
+	for _, c := range chunks {
+		if strings.Contains(c.Text, "| 2 | 去重 |") {
+			found = true
+			if c.Heading != "消费" {
+				t.Errorf("表格片段 Heading = %q", c.Heading)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("未找到表格片段")
 	}
 }
 

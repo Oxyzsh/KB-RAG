@@ -60,6 +60,16 @@ func Split(doc loader.Document, size, overlap int) []Chunk {
 			continue
 		}
 
+		if header, rows, ok := parseTable(text); ok {
+			flush()
+			for _, piece := range splitTable(header, rows, size) {
+				if utf8.RuneCountInString(piece) >= minChunkRunes {
+					chunks = append(chunks, Chunk{Seq: len(chunks), Heading: path(), Text: piece})
+				}
+			}
+			continue
+		}
+
 		n := utf8.RuneCountInString(text)
 		if n > size {
 			flush()
@@ -79,6 +89,85 @@ func Split(doc loader.Document, size, overlap int) []Chunk {
 	}
 	flush()
 	return chunks
+}
+
+// parseTable 识别 Markdown 表格块：表头行 + 分隔行 + 至少一行数据。
+// 只接受“整块都是表格”的情况，避免误吞表格前后的普通段落。
+func parseTable(text string) (header, rows []string, ok bool) {
+	lines := strings.Split(text, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \t\r")
+	}
+	if len(lines) < 3 {
+		return nil, nil, false
+	}
+	if strings.TrimSpace(lines[0]) == "" || !strings.Contains(lines[0], "|") {
+		return nil, nil, false
+	}
+	if !isTableSeparator(lines[1]) {
+		return nil, nil, false
+	}
+
+	for i := 2; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" || !strings.Contains(line, "|") {
+			for _, rest := range lines[i:] {
+				if strings.TrimSpace(rest) != "" {
+					return nil, nil, false
+				}
+			}
+			break
+		}
+		rows = append(rows, line)
+	}
+	if len(rows) == 0 {
+		return nil, nil, false
+	}
+	return []string{lines[0], lines[1]}, rows, true
+}
+
+func isTableSeparator(line string) bool {
+	line = strings.TrimSpace(line)
+	if !strings.Contains(line, "|") {
+		return false
+	}
+	for _, r := range line {
+		switch r {
+		case '|', '-', ':', ' ', '\t', '\r':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// splitTable 按行拆分超大表格，并在每个片段重复表头。
+// 单行即使超过 size 也不拆开，保证表格结构不被破坏。
+func splitTable(header, rows []string, size int) []string {
+	headerText := strings.Join(header, "\n")
+	headerLen := utf8.RuneCountInString(headerText)
+	var out []string
+	var current []string
+	currentLen := headerLen
+
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		out = append(out, headerText+"\n"+strings.Join(current, "\n"))
+		current = nil
+		currentLen = headerLen
+	}
+	for _, row := range rows {
+		rowLen := utf8.RuneCountInString(row) + 1
+		if len(current) > 0 && currentLen+rowLen > size {
+			flush()
+		}
+		current = append(current, row)
+		currentLen += rowLen
+	}
+	flush()
+	return out
 }
 
 func splitLong(text string, size, overlap int) []string {
