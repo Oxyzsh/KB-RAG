@@ -34,6 +34,8 @@ func Load(path string) (Document, error) {
 		return loadText(path)
 	case ".docx":
 		return loadDOCX(path)
+	case ".pdf":
+		return loadPDF(path)
 	default:
 		return Document{}, fmt.Errorf("暂不支持的文档格式: %s", filepath.Ext(path))
 	}

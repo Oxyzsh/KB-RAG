@@ -3,6 +3,7 @@ module kb-rag
 go 1.26.5
 
 require (
+	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e // indirect
 	github.com/yuin/goldmark v1.8.6 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
