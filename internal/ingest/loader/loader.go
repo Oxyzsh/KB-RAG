@@ -32,6 +32,8 @@ func Load(path string) (Document, error) {
 		return loadMarkdown(path)
 	case ".txt":
 		return loadText(path)
+	case ".docx":
+		return loadDOCX(path)
 	default:
 		return Document{}, fmt.Errorf("暂不支持的文档格式: %s", filepath.Ext(path))
 	}
