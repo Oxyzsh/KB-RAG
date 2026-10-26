@@ -13,14 +13,15 @@ import (
 )
 
 type Config struct {
-	Embedding EmbeddingConfig `yaml:"embedding"`
-	LLM       LLMConfig       `yaml:"llm"`
-	Chunk     ChunkConfig     `yaml:"chunk"`
-	Store     StoreConfig     `yaml:"store"`
-	Log       LogConfig       `yaml:"log"`
-	Web       WebConfig       `yaml:"web"`
-	APIKey    string          `yaml:"-"`
-	WebToken  string          `yaml:"-"`
+	Embedding     EmbeddingConfig `yaml:"embedding"`
+	LLM           LLMConfig       `yaml:"llm"`
+	Chunk         ChunkConfig     `yaml:"chunk"`
+	Store         StoreConfig     `yaml:"store"`
+	Log           LogConfig       `yaml:"log"`
+	Web           WebConfig       `yaml:"web"`
+	APIKey        string          `yaml:"-"`
+	AdminUser     string          `yaml:"-"`
+	AdminPassword string          `yaml:"-"`
 }
 
 type EmbeddingConfig struct {
@@ -79,7 +80,11 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置文件 %s: %w", path, err)
 	}
 	cfg.APIKey = os.Getenv("KB_RAG_LLM_API_KEY")
-	cfg.WebToken = os.Getenv("KB_RAG_WEB_TOKEN")
+	cfg.AdminUser = strings.TrimSpace(os.Getenv("KB_RAG_ADMIN_USER"))
+	if cfg.AdminUser == "" {
+		cfg.AdminUser = "admin"
+	}
+	cfg.AdminPassword = os.Getenv("KB_RAG_ADMIN_PASSWORD")
 	return &cfg, nil
 }
 
@@ -144,9 +149,6 @@ func (c *Config) validateServe() error {
 	index := filepath.Join(c.Web.FrontendDir, "index.html")
 	if _, err := os.Stat(index); err != nil {
 		return fmt.Errorf("前端未构建：缺少 %s，请先在 fronted 执行 npm run build", index)
-	}
-	if len(c.WebToken) < 16 {
-		return fmt.Errorf("环境变量 KB_RAG_WEB_TOKEN 至少需要 16 个字符")
 	}
 	return nil
 }

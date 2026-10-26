@@ -5,6 +5,7 @@
 ## 状态
 
 - 第一期 CLI 已实现；真实 Ollama 与云端 OpenAI 兼容网关冒烟通过（2026-10-23，`ingest` / `ask` / `stats` 手动验证）。
+- 第二期 Web 界面已实现，并扩展为账号登录、admin/editor/viewer 角色、多租户与审计日志（2026-10-26）。
 - 30 条人工评测已完成（25 条可答 + 5 条无答案），在当前样例集上达到验收线：top-8 92%、答案正确且引用无误 88%、拒答 100%；详见 [评测结果](docs/eval/questions.md)。
 
 ## 模块文档
@@ -24,6 +25,9 @@
 | [internal/store](internal/store/README.md) | SQLite 存储、事务与向量检索 |
 | [internal/llm](internal/llm/README.md) | OpenAI 兼容生成客户端 |
 | [internal/query](internal/query/README.md) | 检索编排、prompt 与引用格式化 |
+| [internal/web](internal/web/README.md) | HTTP API、会话认证、角色与多租户 |
+| [internal/auth](internal/auth/password.go) | 密码哈希与会话令牌原语 |
+| [fronted](fronted/README.md) | Vue 3 Web 界面 |
 
 ## 设计文档
 
@@ -67,12 +71,16 @@ go build -o KB-RAG.exe ./cmd/KB-RAG
 # 增量入库；重复执行会跳过未变化文件
 ./KB-RAG.exe ingest ./docs
 
+# 指定租户（默认 default；需先在 Web 中创建该租户）
+./KB-RAG.exe ingest --tenant acme ./docs
+
 # 检索并生成带引用的答案
 ./KB-RAG.exe ask "年假怎么请"
-./KB-RAG.exe ask --top-k 4 "年假怎么请"
+./KB-RAG.exe ask --tenant acme --top-k 4 "年假怎么请"
 
 # 查看状态
 ./KB-RAG.exe stats
+./KB-RAG.exe stats --tenant acme
 ```
 
 运行时数据默认写入 `./data/`，不提交到版本库。
@@ -81,7 +89,7 @@ go build -o KB-RAG.exe ./cmd/KB-RAG
 
 ## Web 界面
 
-Web 界面由 Go `serve` 命令托管，前端源码在 `fronted/`。
+Web 界面由 Go `serve` 命令托管，前端源码在 `fronted/`，支持账号登录、角色权限、多租户与审计日志。
 
 ```powershell
 # 构建前端
@@ -93,17 +101,48 @@ cd ..
 # 构建 Go
 go build -o KB-RAG.exe ./cmd/KB-RAG
 
-# 设置两个密钥（PowerShell 示例）
-$env:KB_RAG_WEB_TOKEN = "至少16个字符的共享令牌"
+# 首次启动：设置初始超级管理员（仅 users 表为空时生效）
+$env:KB_RAG_ADMIN_USER = "admin"          # 可选，默认 admin
+$env:KB_RAG_ADMIN_PASSWORD = "至少12个字符"
 $env:KB_RAG_LLM_API_KEY = "你的生成服务Key"
 
 # 启动 Web 服务（默认 http://127.0.0.1:8080）
 ./KB-RAG.exe serve --config config.yaml
 ```
 
-浏览器打开 `http://127.0.0.1:8080`，输入共享令牌登录。
+浏览器打开 `http://127.0.0.1:8080`，输入租户（默认 `default`）、用户名和密码登录。`KB_RAG_ADMIN_PASSWORD` 只在首次创建管理员时读取，之后不会覆盖已有密码；后续改密请用系统管理页或 CLI 之外的恢复流程。
 
-局域网访问：把 `config.yaml` 的 `web.addr` 改为 `0.0.0.0:8080`（或指定网卡 IP），并从其他设备访问 `http://<主机IP>:8080`。令牌使用明文 HTTP 传输，请只在可信局域网使用；需要更强安全时放在 HTTPS 反向代理后。
+### 账号与角色
+
+| 角色 | 权限 |
+|------|------|
+| `admin` | 本租户用户管理、审计查看、文档上传/删除/重试、问答 |
+| `editor` | 文档上传/删除/重试、问答与查看 |
+| `viewer` | 只能问答与查看文档列表/统计 |
+
+首个管理员是超级管理员（`is_super`），额外可以创建租户、重置任一租户管理员密码、查看全局审计（`scope=all`）。用户名在同一租户内唯一，登录必须带租户标识。
+
+### 多租户
+
+- 每个租户拥有独立的文档与片段；跨租户访问统一返回 404。
+- 现有数据升级后自动归入 `default` 租户。
+- 新租户由超级管理员在“系统管理 → 租户管理”中创建，创建时需同时指定该租户的首个管理员。
+- CLI 用 `--tenant <slug>` 操作指定租户；租户不存在时退出码 2，不会自动创建。
+- 嵌入模型与切分参数仍是全库共享，多租户只隔离数据，不隔离模型。
+
+### 审计日志
+
+记录登录成功/失败、文档上传/删除/重试、问答元数据（问题原文、top_k、引用数、是否生成、耗时）、用户与租户管理操作。**不记录答案、引用原文、密码或会话令牌**。审计在 SQLite 中保留，当前不做自动清理；租户管理员查看本租户，超级管理员可用“全局”查看未归属事件。
+
+### 升级与备份
+
+从旧版本（schema v2）升级时会自动迁移到 v3：文档与片段保留并归入 `default` 租户。升级前请停止所有 KB-RAG 进程，并备份 `KB-RAG.db`、`-wal`、`-shm`；旧版本二进制无法打开 v3 库。首次升级启动后按提示设置 `KB_RAG_ADMIN_PASSWORD` 创建管理员。
+
+### 局域网与安全
+
+局域网访问：把 `config.yaml` 的 `web.addr` 改为 `0.0.0.0:8080`（或指定网卡 IP），并从其他设备访问 `http://<主机IP>:8080`。密码和会话令牌使用明文 HTTP 传输，请只在可信局域网使用；需要更强安全时放在 HTTPS 反向代理后。会话固定 12 小时，前端只把令牌保存在 `sessionStorage`。
+
+超级管理员密码无法通过管理 API 重置。若遗失，请停服并备份后手动执行 `DELETE FROM users; DELETE FROM sessions;`，再按首次启动流程设置 `KB_RAG_ADMIN_PASSWORD` 重新创建（文档与租户数据保留）。
 
 前端开发模式：
 

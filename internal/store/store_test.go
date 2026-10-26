@@ -25,22 +25,32 @@ func testStore(t *testing.T) *Store {
 	return s
 }
 
+func testTenant(t *testing.T, s *Store) int64 {
+	t.Helper()
+	tenant, ok, err := s.TenantBySlug(context.Background(), defaultTenantSlug)
+	if err != nil || !ok {
+		t.Fatalf("读取默认租户失败: ok=%v err=%v", ok, err)
+	}
+	return tenant.ID
+}
+
 func TestReplaceAndSearch(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A", "hash-a", []ChunkInput{
+	tenantID := testTenant(t, s)
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/a.md", "A", "hash-a", []ChunkInput{
 		{Seq: 0, Heading: "休假", Text: "年假规定", Vector: []float32{1, 0, 0}},
 		{Seq: 1, Heading: "食堂", Text: "食堂时间", Vector: []float32{0, 1, 0}},
 	}); err != nil {
 		t.Fatalf("ReplaceDocument a: %v", err)
 	}
-	if err := s.ReplaceDocument(ctx, "/docs/b.md", "B", "hash-b", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/b.md", "B", "hash-b", []ChunkInput{
 		{Seq: 0, Text: "混合内容", Vector: []float32{0.6, 0.8, 0}},
 	}); err != nil {
 		t.Fatalf("ReplaceDocument b: %v", err)
 	}
 
-	hits, err := s.Search(ctx, []float32{1, 0, 0}, 2)
+	hits, err := s.Search(ctx, tenantID, []float32{1, 0, 0}, 2)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -54,12 +64,12 @@ func TestReplaceAndSearch(t *testing.T) {
 		t.Errorf("hits[1] = %+v", hits[1])
 	}
 
-	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A2", "hash-a2", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/a.md", "A2", "hash-a2", []ChunkInput{
 		{Seq: 0, Heading: "休假", Text: "新年假规定", Vector: []float32{1, 0, 0}},
 	}); err != nil {
 		t.Fatalf("ReplaceDocument a2: %v", err)
 	}
-	hits, err = s.Search(ctx, []float32{1, 0, 0}, 10)
+	hits, err = s.Search(ctx, tenantID, []float32{1, 0, 0}, 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -71,7 +81,7 @@ func TestReplaceAndSearch(t *testing.T) {
 			t.Fatal("旧片段未被删除")
 		}
 	}
-	stats, err := s.Stats(ctx)
+	stats, err := s.Stats(ctx, tenantID)
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
@@ -83,34 +93,35 @@ func TestReplaceAndSearch(t *testing.T) {
 func TestDocumentLifecycle(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	if _, ok, err := s.GetDocument("/docs/x.md"); err != nil || ok {
+	tenantID := testTenant(t, s)
+	if _, ok, err := s.GetDocument(ctx, tenantID, "/docs/x.md"); err != nil || ok {
 		t.Fatalf("不存在文档查询异常: ok=%v err=%v", ok, err)
 	}
-	if err := s.ReplaceDocument(ctx, "/docs/x.md", "X", "hash-1", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/x.md", "X", "hash-1", []ChunkInput{
 		{Seq: 0, Text: "旧版本内容", Vector: []float32{1, 0, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	info, ok, err := s.GetDocument("/docs/x.md")
+	info, ok, err := s.GetDocument(ctx, tenantID, "/docs/x.md")
 	if err != nil || !ok || info.Status != "ok" || info.Hash != "hash-1" {
 		t.Fatalf("info = %+v, ok=%v, err=%v", info, ok, err)
 	}
 
-	if err := s.MarkFailed(ctx, "/docs/x.md", "X", "hash-2", "embed down"); err != nil {
+	if err := s.MarkFailed(ctx, tenantID, "/docs/x.md", "X", "hash-2", "embed down"); err != nil {
 		t.Fatal(err)
 	}
-	info, _, err = s.GetDocument("/docs/x.md")
+	info, _, err = s.GetDocument(ctx, tenantID, "/docs/x.md")
 	if err != nil || info.Status != "failed" || info.Hash != "hash-2" || info.Error != "embed down" {
 		t.Fatalf("失败状态 = %+v, err=%v", info, err)
 	}
-	hits, err := s.Search(ctx, []float32{1, 0, 0}, 10)
+	hits, err := s.Search(ctx, tenantID, []float32{1, 0, 0}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hits) != 0 {
 		t.Fatalf("失败文档不应参与检索: %+v", hits)
 	}
-	stats, err := s.Stats(ctx)
+	stats, err := s.Stats(ctx, tenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,12 +129,12 @@ func TestDocumentLifecycle(t *testing.T) {
 		t.Fatalf("旧片段应保留在库中等待重试: %+v", stats)
 	}
 
-	if err := s.ReplaceDocument(ctx, "/docs/x.md", "X", "hash-2", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/x.md", "X", "hash-2", []ChunkInput{
 		{Seq: 0, Text: "新版本内容", Vector: []float32{1, 0, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	info, _, _ = s.GetDocument("/docs/x.md")
+	info, _, _ = s.GetDocument(ctx, tenantID, "/docs/x.md")
 	if info.Status != "ok" || info.Hash != "hash-2" {
 		t.Fatalf("重试成功后状态 = %+v", info)
 	}
@@ -132,6 +143,7 @@ func TestDocumentLifecycle(t *testing.T) {
 func TestMetaConsistency(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
+	tenantID := testTenant(t, s)
 	if err := s.InitMeta("other-model", 500); err == nil {
 		t.Fatal("嵌入模型不一致应报错")
 	}
@@ -141,12 +153,12 @@ func TestMetaConsistency(t *testing.T) {
 	if err := s.SetDim(4); err == nil {
 		t.Fatal("维度不一致应报错")
 	}
-	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A", "h", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/a.md", "A", "h", []ChunkInput{
 		{Seq: 0, Text: "x", Vector: []float32{1, 0}},
 	}); err == nil {
 		t.Fatal("片段维度不一致应报错")
 	}
-	if _, err := s.Search(ctx, []float32{1, 0}, 5); err == nil {
+	if _, err := s.Search(ctx, tenantID, []float32{1, 0}, 5); err == nil {
 		t.Fatal("查询维度不一致应报错")
 	}
 }
@@ -178,20 +190,21 @@ func TestSchemaVersionMismatch(t *testing.T) {
 func TestStats(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A", "h1", []ChunkInput{
+	tenantID := testTenant(t, s)
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/a.md", "A", "h1", []ChunkInput{
 		{Seq: 0, Text: "内容一", Vector: []float32{1, 0, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceDocument(ctx, "/docs/b.md", "B", "h2", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/b.md", "B", "h2", []ChunkInput{
 		{Seq: 0, Text: "内容二", Vector: []float32{0, 1, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkFailed(ctx, "/docs/b.md", "B", "h3", "boom"); err != nil {
+	if err := s.MarkFailed(ctx, tenantID, "/docs/b.md", "B", "h3", "boom"); err != nil {
 		t.Fatal(err)
 	}
-	stats, err := s.Stats(ctx)
+	stats, err := s.Stats(ctx, tenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +228,8 @@ func TestSearchOnEmptyStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err := s.Search(context.Background(), []float32{1, 0, 0}, 5); err == nil {
+	tenantID := testTenant(t, s)
+	if _, err := s.Search(context.Background(), tenantID, []float32{1, 0, 0}, 5); err == nil {
 		t.Fatal("空库检索应报错")
 	}
 }
@@ -223,7 +237,8 @@ func TestSearchOnEmptyStore(t *testing.T) {
 func TestReplaceDocumentRollsBackOnInsertError(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A", "hash-old", []ChunkInput{
+	tenantID := testTenant(t, s)
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/a.md", "A", "hash-old", []ChunkInput{
 		{Seq: 0, Text: "旧内容", Vector: []float32{1, 0, 0}},
 	}); err != nil {
 		t.Fatal(err)
@@ -232,7 +247,7 @@ func TestReplaceDocumentRollsBackOnInsertError(t *testing.T) {
 		WHEN NEW.text='boom' BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A2", "hash-new", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/a.md", "A2", "hash-new", []ChunkInput{
 		{Seq: 0, Text: "新内容", Vector: []float32{1, 0, 0}},
 		{Seq: 1, Text: "boom", Vector: []float32{0, 1, 0}},
 	}); err == nil {
@@ -241,11 +256,11 @@ func TestReplaceDocumentRollsBackOnInsertError(t *testing.T) {
 	if _, err := s.db.Exec(`DROP TRIGGER fail_insert`); err != nil {
 		t.Fatal(err)
 	}
-	info, ok, err := s.GetDocument("/docs/a.md")
+	info, ok, err := s.GetDocument(ctx, tenantID, "/docs/a.md")
 	if err != nil || !ok || info.Status != "ok" || info.Hash != "hash-old" || info.Title != "A" {
 		t.Fatalf("事务未完整回滚: %+v, ok=%v, err=%v", info, ok, err)
 	}
-	hits, err := s.Search(ctx, []float32{1, 0, 0}, 10)
+	hits, err := s.Search(ctx, tenantID, []float32{1, 0, 0}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,24 +275,25 @@ func TestPathKeyCaseInsensitiveOnWindows(t *testing.T) {
 	}
 	s := testStore(t)
 	ctx := context.Background()
-	if err := s.ReplaceDocument(ctx, "/docs/Case.md", "Case", "h", []ChunkInput{
+	tenantID := testTenant(t, s)
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/Case.md", "Case", "h", []ChunkInput{
 		{Seq: 0, Text: "内容内容内容", Vector: []float32{1, 0, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	info, ok, err := s.GetDocument("/DOCS/case.md")
+	info, ok, err := s.GetDocument(ctx, tenantID, "/DOCS/case.md")
 	if err != nil || !ok {
 		t.Fatalf("大小写不同应命中同一文档: ok=%v err=%v", ok, err)
 	}
 	if info.Path != "/docs/Case.md" {
 		t.Errorf("展示路径被意外改写: %q", info.Path)
 	}
-	if err := s.ReplaceDocument(ctx, "/DOCS/CASE.MD", "Case2", "h2", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/DOCS/CASE.MD", "Case2", "h2", []ChunkInput{
 		{Seq: 0, Text: "更新后的内容", Vector: []float32{1, 0, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	stats, err := s.Stats(ctx)
+	stats, err := s.Stats(ctx, tenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,20 +305,21 @@ func TestPathKeyCaseInsensitiveOnWindows(t *testing.T) {
 func TestListDocumentsAndDelete(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
+	tenantID := testTenant(t, s)
 
-	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A", "h1", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/a.md", "A", "h1", []ChunkInput{
 		{Seq: 0, Text: "a1", Vector: []float32{1, 0, 0}},
 		{Seq: 1, Text: "a2", Vector: []float32{0, 1, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceDocument(ctx, "/docs/b.md", "B", "h2", []ChunkInput{
+	if err := s.ReplaceDocument(ctx, tenantID, "/docs/b.md", "B", "h2", []ChunkInput{
 		{Seq: 0, Text: "b1", Vector: []float32{0, 0, 1}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	list, err := s.ListDocuments(ctx)
+	list, err := s.ListDocuments(ctx, tenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,22 +333,22 @@ func TestListDocumentsAndDelete(t *testing.T) {
 		t.Errorf("list[1] = %+v", list[1])
 	}
 
-	info, ok, err := s.GetDocumentByID(ctx, list[1].ID)
+	info, ok, err := s.GetDocumentByID(ctx, tenantID, list[1].ID)
 	if err != nil || !ok || info.Path != "/docs/a.md" {
 		t.Fatalf("GetDocumentByID = %+v, ok=%v, err=%v", info, ok, err)
 	}
 
-	if err := s.DeleteDocument(ctx, list[1].ID); err != nil {
+	if err := s.DeleteDocument(ctx, tenantID, list[1].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := s.GetDocument("/docs/a.md"); err != nil || ok {
+	if _, ok, err := s.GetDocument(ctx, tenantID, "/docs/a.md"); err != nil || ok {
 		t.Fatalf("删除后仍能查到文档: ok=%v err=%v", ok, err)
 	}
-	if err := s.DeleteDocument(ctx, list[1].ID); !errors.Is(err, ErrDocumentNotFound) {
+	if err := s.DeleteDocument(ctx, tenantID, list[1].ID); !errors.Is(err, ErrDocumentNotFound) {
 		t.Fatalf("重复删除错误 = %v", err)
 	}
 
-	stats, err := s.Stats(ctx)
+	stats, err := s.Stats(ctx, tenantID)
 	if err != nil {
 		t.Fatal(err)
 	}

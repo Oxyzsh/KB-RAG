@@ -13,8 +13,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"kb-rag/internal/cli"
+	"kb-rag/internal/store"
 )
 
 type fakeEmbedServer struct{}
@@ -219,5 +221,84 @@ func TestUsage(t *testing.T) {
 	}
 	if code := cli.Run(context.Background(), []string{"unknown"}, io.Discard, io.Discard); code != 2 {
 		t.Fatalf("未知命令 code = %d", code)
+	}
+}
+
+func TestUnknownTenant(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeFile(t, cfgPath, fmt.Sprintf(`store:
+  path: %s
+log:
+  file: %s
+`, filepath.ToSlash(filepath.Join(dir, "kb.db")), filepath.ToSlash(filepath.Join(dir, "app.log"))))
+
+	var stdout, stderr strings.Builder
+	code := cli.Run(context.Background(), []string{"stats", "--config", cfgPath, "--tenant", "missing"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "不存在") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestServeBootstrapAdmin(t *testing.T) {
+	t.Setenv("KB_RAG_LLM_API_KEY", "test-key")
+	t.Setenv("KB_RAG_ADMIN_USER", "root")
+	t.Setenv("KB_RAG_ADMIN_PASSWORD", "bootstrap-password-123")
+
+	dir := t.TempDir()
+	frontend := filepath.Join(dir, "frontend")
+	writeFile(t, filepath.Join(frontend, "index.html"), "<html>kb-rag</html>")
+	storePath := filepath.Join(dir, "data", "kb.db")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeFile(t, cfgPath, fmt.Sprintf(`embedding:
+  base_url: http://127.0.0.1:11434
+  model: bge-m3
+  batch_size: 2
+llm:
+  base_url: http://127.0.0.1:9999/v1
+  model: test-llm
+chunk:
+  size: 100
+  overlap: 20
+store:
+  path: %s
+web:
+  addr: 127.0.0.1:18099
+  upload_dir: %s
+  max_upload_mb: 20
+  frontend_dir: %s
+log:
+  file: %s
+`, filepath.ToSlash(storePath),
+		filepath.ToSlash(filepath.Join(dir, "uploads")),
+		filepath.ToSlash(frontend),
+		filepath.ToSlash(filepath.Join(dir, "logs", "app.log"))))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	var stdout, stderr strings.Builder
+	code := cli.Run(ctx, []string{"serve", "--config", cfgPath}, &stdout, &stderr)
+	if code != 130 {
+		t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+
+	st, err := store.Open(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if n, err := st.CountUsers(context.Background()); err != nil || n != 1 {
+		t.Fatalf("CountUsers = %d, err=%v", n, err)
+	}
+	tenant, ok, err := st.TenantBySlug(context.Background(), "default")
+	if err != nil || !ok {
+		t.Fatalf("default tenant: ok=%v err=%v", ok, err)
+	}
+	user, ok, err := st.GetUserByUsername(context.Background(), tenant.ID, "root")
+	if err != nil || !ok || !user.IsSuper || user.Role != "admin" {
+		t.Fatalf("bootstrap user = %+v, ok=%v, err=%v", user, ok, err)
 	}
 }

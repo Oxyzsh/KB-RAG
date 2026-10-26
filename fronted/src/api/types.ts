@@ -9,6 +9,7 @@ export interface Stats {
   documents_failed: number
   chunks: number
   size_bytes: number
+  tenant_size_bytes: number
   embedding: EmbeddingInfo
 }
 
@@ -52,4 +53,67 @@ export interface DocumentListResponse {
 
 export interface ErrorBody {
   error: string
+}
+
+export type Role = 'admin' | 'editor' | 'viewer'
+
+export interface User {
+  id: number
+  username: string
+  role: Role
+  is_super: boolean
+  tenant_id: number
+  tenant_slug: string
+  tenant_name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Tenant {
+  id: number
+  slug: string
+  name: string
+}
+
+export interface LoginResponse {
+  token: string
+  expires_at: string
+  user: User
+}
+
+export interface SessionResponse {
+  user: User
+}
+
+export interface UserListResponse {
+  users: User[]
+}
+
+export interface TenantListResponse {
+  tenants: Tenant[]
+}
+
+export interface CreateTenantResponse {
+  tenant: Tenant
+  user: User
+}
+
+export interface AuditItem {
+  id: number
+  tenant_id: number | null
+  tenant_slug: string
+  user_id: number | null
+  username: string
+  action: string
+  target: string
+  detail: string
+  ip: string
+  created_at: string
+}
+
+export interface AuditListResponse {
+  items: AuditItem[]
+  total: number
+  page: number
+  page_size: number
 }

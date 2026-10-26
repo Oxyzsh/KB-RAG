@@ -1,9 +1,16 @@
 import type {
   AskResponse,
+  AuditListResponse,
+  CreateTenantResponse,
   DocumentListResponse,
   ErrorBody,
+  LoginResponse,
+  Role,
+  SessionResponse,
   Stats,
+  TenantListResponse,
   UploadResponse,
+  UserListResponse,
 } from './types'
 
 const TOKEN_KEY = 'kbrag_token'
@@ -64,8 +71,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T
 }
 
-export function verifySession(): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>('/session')
+export function login(tenant: string, username: string, password: string): Promise<LoginResponse> {
+  return request<LoginResponse>('/login', {
+    method: 'POST',
+    body: JSON.stringify({ tenant, username, password }),
+  })
+}
+
+export function logout(): Promise<void> {
+  return request<void>('/logout', { method: 'POST' })
+}
+
+export function getSession(): Promise<SessionResponse> {
+  return request<SessionResponse>('/session')
 }
 
 export function getStats(): Promise<Stats> {
@@ -95,4 +113,69 @@ export function ask(question: string, topK: number): Promise<AskResponse> {
     method: 'POST',
     body: JSON.stringify({ question, top_k: topK }),
   })
+}
+
+export function listUsers(): Promise<UserListResponse> {
+  return request<UserListResponse>('/users')
+}
+
+export function createUser(username: string, password: string, role: Role): Promise<void> {
+  return request<void>('/users', {
+    method: 'POST',
+    body: JSON.stringify({ username, password, role }),
+  })
+}
+
+export function updateUser(id: number, data: { role?: Role; password?: string }): Promise<void> {
+  return request<void>(`/users/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  })
+}
+
+export function deleteUser(id: number): Promise<void> {
+  return request<void>(`/users/${id}`, { method: 'DELETE' })
+}
+
+export function listTenants(): Promise<TenantListResponse> {
+  return request<TenantListResponse>('/tenants')
+}
+
+export function createTenant(data: {
+  slug: string
+  name: string
+  admin_username: string
+  admin_password: string
+}): Promise<CreateTenantResponse> {
+  return request<CreateTenantResponse>('/tenants', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export function resetTenantAdmin(slug: string, username: string, password: string): Promise<void> {
+  return request<void>(`/tenants/${encodeURIComponent(slug)}/admin/reset`, {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export interface AuditQuery {
+  page?: number
+  page_size?: number
+  action?: string
+  scope?: 'all' | ''
+  from?: string
+  to?: string
+}
+
+export function listAudit(query: AuditQuery = {}): Promise<AuditListResponse> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== '' && value !== null) {
+      params.set(key, String(value))
+    }
+  }
+  const queryString = params.toString()
+  return request<AuditListResponse>(`/audit${queryString ? `?${queryString}` : ''}`)
 }

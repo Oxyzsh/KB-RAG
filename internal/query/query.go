@@ -24,7 +24,7 @@ type Embedder interface {
 
 type Store interface {
 	Meta() (store.EmbeddingMeta, error)
-	Search(ctx context.Context, query []float32, topK int) ([]store.Hit, error)
+	Search(ctx context.Context, tenantID int64, query []float32, topK int) ([]store.Hit, error)
 }
 
 type LLM interface {
@@ -42,9 +42,17 @@ type Service struct {
 	Store      Store
 	LLM        LLM
 	EmbedModel string
+	TenantID   int64
 	TopK       int
 	BaseDir    string
 	Logger     *slog.Logger
+}
+
+// WithTenant 返回设置了租户 ID 的副本，避免修改共享的 Service。
+func (s *Service) WithTenant(tenantID int64) *Service {
+	cp := *s
+	cp.TenantID = tenantID
+	return &cp
 }
 
 type Result struct {
@@ -86,7 +94,7 @@ func (s *Service) AskWithTopK(ctx context.Context, question string, topK int) (R
 	if topK <= 0 {
 		topK = 8
 	}
-	hits, err := s.Store.Search(ctx, vectors[0], topK)
+	hits, err := s.Store.Search(ctx, s.TenantID, vectors[0], topK)
 	if err != nil {
 		return Result{}, fmt.Errorf("检索失败: %w", err)
 	}

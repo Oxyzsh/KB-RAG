@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
+	"kb-rag/internal/auth"
 	"kb-rag/internal/config"
 	"kb-rag/internal/ingest/embedder"
 	"kb-rag/internal/llm"
@@ -52,6 +54,35 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		logger.Error("知识库初始化失败", "error", err)
 		return exitRuntime
 	}
+	if err := st.DeleteExpiredSessions(ctx, time.Now()); err != nil {
+		logger.Warn("清理过期会话失败", "error", err)
+	}
+
+	userCount, err := st.CountUsers(ctx)
+	if err != nil {
+		logger.Error("读取用户数量失败", "error", err)
+		return exitRuntime
+	}
+	if userCount == 0 {
+		if len([]rune(cfg.AdminPassword)) < 12 {
+			fmt.Fprintln(stderr, "配置错误: 首次启动需设置环境变量 KB_RAG_ADMIN_PASSWORD，且至少 12 个字符")
+			return exitConfig
+		}
+		hash, err := auth.HashPassword(cfg.AdminPassword)
+		if err != nil {
+			fmt.Fprintf(stderr, "配置错误: %v\n", err)
+			return exitConfig
+		}
+		admin, created, err := st.EnsureBootstrapAdmin(ctx, cfg.AdminUser, hash)
+		if err != nil {
+			logger.Error("创建初始管理员失败", "error", err)
+			return exitRuntime
+		}
+		if created {
+			logger.Info("已创建初始管理员", "username", admin.Username, "tenant", "default")
+			fmt.Fprintf(stdout, "已创建初始管理员：%s（默认租户 default）\n", admin.Username)
+		}
+	}
 
 	baseDir, err := os.Getwd()
 	if err != nil {
@@ -76,7 +107,6 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		UploadDir:      cfg.Web.UploadDir,
 		MaxUploadBytes: int64(cfg.Web.MaxUploadMB) << 20,
 		FrontendDir:    cfg.Web.FrontendDir,
-		Token:          cfg.WebToken,
 		IngestModel:    cfg.Embedding.Model,
 		ChunkSize:      cfg.Chunk.Size,
 		Overlap:        cfg.Chunk.Overlap,

@@ -24,14 +24,16 @@ func (f *fakeEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, 
 }
 
 type fakeStore struct {
-	meta    store.EmbeddingMeta
-	hits    []store.Hit
-	err     error
-	gotTopK int
+	meta        store.EmbeddingMeta
+	hits        []store.Hit
+	err         error
+	gotTopK     int
+	gotTenantID int64
 }
 
 func (f *fakeStore) Meta() (store.EmbeddingMeta, error) { return f.meta, nil }
-func (f *fakeStore) Search(ctx context.Context, query []float32, topK int) ([]store.Hit, error) {
+func (f *fakeStore) Search(ctx context.Context, tenantID int64, query []float32, topK int) ([]store.Hit, error) {
+	f.gotTenantID = tenantID
 	f.gotTopK = topK
 	return f.hits, f.err
 }
@@ -163,6 +165,7 @@ func TestAskWithTopK(t *testing.T) {
 		Store:      st,
 		LLM:        &fakeLLM{answer: "答案"},
 		EmbedModel: "bge-m3",
+		TenantID:   7,
 		TopK:       8,
 	}
 	if _, err := svc.AskWithTopK(context.Background(), "q", 3); err != nil {
@@ -170,6 +173,30 @@ func TestAskWithTopK(t *testing.T) {
 	}
 	if st.gotTopK != 3 {
 		t.Fatalf("topK = %d, want 3", st.gotTopK)
+	}
+	if st.gotTenantID != 7 {
+		t.Fatalf("tenantID = %d, want 7", st.gotTenantID)
+	}
+}
+
+func TestWithTenantDoesNotMutateOriginal(t *testing.T) {
+	st := &fakeStore{meta: store.EmbeddingMeta{Model: "bge-m3", Dim: 3}, hits: []store.Hit{{Path: "/docs/a.md", Text: "内容"}}}
+	original := &Service{
+		Embedder:   &fakeEmbedder{vector: []float32{1, 0, 0}},
+		Store:      st,
+		LLM:        &fakeLLM{answer: "答案"},
+		EmbedModel: "bge-m3",
+		TenantID:   1,
+		TopK:       8,
+	}
+	if _, err := original.WithTenant(9).Ask(context.Background(), "q"); err != nil {
+		t.Fatal(err)
+	}
+	if st.gotTenantID != 9 {
+		t.Fatalf("tenantID = %d, want 9", st.gotTenantID)
+	}
+	if original.TenantID != 1 {
+		t.Fatalf("原 Service 被修改: %d", original.TenantID)
 	}
 }
 

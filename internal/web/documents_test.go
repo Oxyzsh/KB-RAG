@@ -3,61 +3,16 @@ package web
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"io/fs"
-	"mime/multipart"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func multipartBody(t *testing.T, field, filename string, content []byte) (*bytes.Buffer, string) {
-	t.Helper()
-	var b bytes.Buffer
-	mw := multipart.NewWriter(&b)
-	fw, err := mw.CreateFormFile(field, filename)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fw.Write(content); err != nil {
-		t.Fatal(err)
-	}
-	if err := mw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return &b, mw.FormDataContentType()
-}
-
-func uploadDoc(t *testing.T, srv *Server, token, filename string, content []byte) *httptest.ResponseRecorder {
-	t.Helper()
-	body, ct := multipartBody(t, "file", filename, content)
-	return call(t, srv.Handler(), "POST", "/api/documents", body.Bytes(), token, ct)
-}
-
-func uploadedFiles(t *testing.T, dir string) []string {
-	t.Helper()
-	var out []string
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			out = append(out, path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return out
-}
-
 func TestUploadAndList(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
-	rec := uploadDoc(t, srv, token, "年假.md", []byte("# 休假\n\n员工累计工作满1年不满10年的，年休假5天。\n"))
+	env := newTestServer(t)
+	rec := uploadDoc(t, env, "editor1", "年假.md", []byte("# 休假\n\n员工累计工作满1年不满10年的，年休假5天。\n"))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("upload status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -72,7 +27,7 @@ func TestUploadAndList(t *testing.T) {
 		t.Fatalf("document = %+v", up.Document)
 	}
 
-	rec = call(t, srv.Handler(), "GET", "/api/documents", nil, token, "")
+	rec = env.callAs(t, "viewer1", "GET", "/api/documents", nil, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list status = %d", rec.Code)
 	}
@@ -86,25 +41,25 @@ func TestUploadAndList(t *testing.T) {
 }
 
 func TestUploadRejectsUnsupportedType(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
-	rec := uploadDoc(t, srv, token, "image.png", []byte("not an image"))
+	env := newTestServer(t)
+	rec := uploadDoc(t, env, "editor1", "image.png", []byte("not an image"))
 	if rec.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestUploadRejectsTooLarge(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
+	env := newTestServer(t)
 	content := bytes.Repeat([]byte("a"), 2<<20)
-	rec := uploadDoc(t, srv, token, "big.md", content)
+	rec := uploadDoc(t, env, "editor1", "big.md", content)
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestUploadSanitizesFilename(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
-	rec := uploadDoc(t, srv, token, "../../evil.md", []byte("# 标题\n\n一段足够长的正文内容。\n"))
+	env := newTestServer(t)
+	rec := uploadDoc(t, env, "editor1", "../../evil.md", []byte("# 标题\n\n一段足够长的正文内容。\n"))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -115,11 +70,11 @@ func TestUploadSanitizesFilename(t *testing.T) {
 	if up.Document.Name != "evil.md" {
 		t.Fatalf("name = %q", up.Document.Name)
 	}
-	files := uploadedFiles(t, srv.uploadDir)
+	files := uploadedFiles(t, env.uploadDir)
 	if len(files) != 1 {
 		t.Fatalf("uploaded files = %v", files)
 	}
-	rel, err := filepath.Rel(srv.uploadDir, files[0])
+	rel, err := filepath.Rel(env.uploadDir, files[0])
 	if err != nil || strings.HasPrefix(rel, "..") {
 		t.Fatalf("文件逃逸上传目录: %s rel=%s err=%v", files[0], rel, err)
 	}
@@ -141,8 +96,8 @@ func TestSafeUploadName(t *testing.T) {
 }
 
 func TestDeleteKeepsSourceFile(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
-	rec := uploadDoc(t, srv, token, "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
+	env := newTestServer(t)
+	rec := uploadDoc(t, env, "editor1", "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("upload status = %d", rec.Code)
 	}
@@ -150,16 +105,16 @@ func TestDeleteKeepsSourceFile(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
 		t.Fatal(err)
 	}
-	filesBefore := uploadedFiles(t, srv.uploadDir)
+	filesBefore := uploadedFiles(t, env.uploadDir)
 	if len(filesBefore) != 1 {
 		t.Fatalf("files before = %v", filesBefore)
 	}
 
-	rec = call(t, srv.Handler(), "DELETE", fmt.Sprintf("/api/documents/%d", up.Document.ID), nil, token, "")
+	rec = env.callAs(t, "editor1", "DELETE", fmtID("/api/documents/%d", up.Document.ID), nil, "")
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	rec = call(t, srv.Handler(), "GET", "/api/documents", nil, token, "")
+	rec = env.callAs(t, "viewer1", "GET", "/api/documents", nil, "")
 	var docs listDocumentsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &docs); err != nil {
 		t.Fatal(err)
@@ -173,22 +128,22 @@ func TestDeleteKeepsSourceFile(t *testing.T) {
 }
 
 func TestDeleteNotFound(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
-	rec := call(t, srv.Handler(), "DELETE", "/api/documents/999", nil, token, "")
+	env := newTestServer(t)
+	rec := env.callAs(t, "editor1", "DELETE", "/api/documents/999", nil, "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d", rec.Code)
 	}
 }
 
 func TestReingestSkipped(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
-	rec := uploadDoc(t, srv, token, "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
+	env := newTestServer(t)
+	rec := uploadDoc(t, env, "editor1", "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
 	var up uploadResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
 		t.Fatal(err)
 	}
 
-	rec = call(t, srv.Handler(), "POST", fmt.Sprintf("/api/documents/%d/reingest", up.Document.ID), nil, token, "")
+	rec = env.callAs(t, "editor1", "POST", fmtID("/api/documents/%d/reingest", up.Document.ID), nil, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reingest status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -202,13 +157,13 @@ func TestReingestSkipped(t *testing.T) {
 }
 
 func TestReingestMissingSource(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
-	rec := uploadDoc(t, srv, token, "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
+	env := newTestServer(t)
+	rec := uploadDoc(t, env, "editor1", "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
 	var up uploadResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
 		t.Fatal(err)
 	}
-	files := uploadedFiles(t, srv.uploadDir)
+	files := uploadedFiles(t, env.uploadDir)
 	if len(files) != 1 {
 		t.Fatalf("files = %v", files)
 	}
@@ -216,7 +171,7 @@ func TestReingestMissingSource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec = call(t, srv.Handler(), "POST", fmt.Sprintf("/api/documents/%d/reingest", up.Document.ID), nil, token, "")
+	rec = env.callAs(t, "editor1", "POST", fmtID("/api/documents/%d/reingest", up.Document.ID), nil, "")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}

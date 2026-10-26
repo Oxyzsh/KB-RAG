@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"kb-rag/internal/query"
 	"kb-rag/internal/store"
 )
 
 func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req askRequest
 	dec := json.NewDecoder(r.Body)
@@ -34,8 +36,16 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.query.AskWithTopK(r.Context(), question, topK)
+	start := time.Now()
+	res, err := s.query.WithTenant(p.TenantID).AskWithTopK(r.Context(), question, topK)
 	citations := citationsFromHits(res.Hits)
+	s.audit(r, p, p.TenantID, "ask", "", map[string]any{
+		"question":    truncateRunes(question, 4000),
+		"top_k":       topK,
+		"citations":   len(citations),
+		"generated":   err == nil,
+		"duration_ms": time.Since(start).Milliseconds(),
+	})
 	if err != nil {
 		if len(citations) > 0 {
 			writeJSON(w, http.StatusOK, askResponse{
@@ -72,4 +82,12 @@ func citationsFromHits(hits []store.Hit) []citationDTO {
 		})
 	}
 	return out
+}
+
+func truncateRunes(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "…"
 }

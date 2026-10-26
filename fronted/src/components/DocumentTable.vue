@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteDocument, reingestDocument } from '../api/client'
 import type { DocumentItem } from '../api/types'
 
-defineProps<{ documents: DocumentItem[] }>()
+defineProps<{ documents: DocumentItem[]; canEdit: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const retrying = ref<number | null>(null)
 
@@ -77,7 +77,7 @@ async function remove(row: DocumentItem) {
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="150" fixed="right">
+      <el-table-column v-if="canEdit" label="操作" width="150" fixed="right">
         <template #default="{ row }">
           <el-button
             v-if="row.status === 'failed'"

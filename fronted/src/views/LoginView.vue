@@ -1,28 +1,32 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { setToken, clearToken, verifySession } from '../api/client'
+import { login, setToken } from '../api/client'
+import { setSessionUser } from '../session'
 
 const router = useRouter()
-const token = ref('')
+const tenant = ref('default')
+const username = ref('')
+const password = ref('')
 const loading = ref(false)
 const error = ref('')
 
 async function submit() {
-  const value = token.value.trim()
-  if (!value) {
-    error.value = '请输入访问令牌'
+  const tenantValue = tenant.value.trim() || 'default'
+  const usernameValue = username.value.trim()
+  if (!usernameValue || !password.value) {
+    error.value = '请输入用户名和密码'
     return
   }
   loading.value = true
   error.value = ''
-  setToken(value)
   try {
-    await verifySession()
+    const res = await login(tenantValue, usernameValue, password.value)
+    setToken(res.token)
+    setSessionUser(res.user)
     await router.replace('/chat')
   } catch (e) {
-    clearToken()
-    error.value = e instanceof Error ? e.message : '令牌校验失败'
+    error.value = e instanceof Error ? e.message : '登录失败'
   } finally {
     loading.value = false
   }
@@ -39,14 +43,24 @@ async function submit() {
           <p>企业知识库问答</p>
         </div>
       </div>
-      <el-input
-        v-model="token"
-        type="password"
-        show-password
-        size="large"
-        placeholder="共享访问令牌"
-        @keyup.enter="submit"
-      />
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="租户">
+          <el-input v-model="tenant" size="large" placeholder="default" />
+        </el-form-item>
+        <el-form-item label="用户名">
+          <el-input v-model="username" size="large" placeholder="用户名" />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input
+            v-model="password"
+            type="password"
+            show-password
+            size="large"
+            placeholder="密码"
+            @keyup.enter="submit"
+          />
+        </el-form-item>
+      </el-form>
       <el-alert
         v-if="error"
         class="login-error"
@@ -56,9 +70,9 @@ async function submit() {
         show-icon
       />
       <el-button type="primary" size="large" class="login-button" :loading="loading" @click="submit">
-        进入知识库
+        登录
       </el-button>
-      <p class="login-hint">令牌由部署者提供，只保存在当前标签页。</p>
+      <p class="login-hint">首次启动由 KB_RAG_ADMIN_USER / KB_RAG_ADMIN_PASSWORD 创建超级管理员。</p>
     </el-card>
   </div>
 </template>
@@ -76,7 +90,7 @@ async function submit() {
 }
 
 .login-card {
-  width: min(400px, 100%);
+  width: min(420px, 100%);
   border: 1px solid #e4e7ec;
   border-radius: 16px;
   padding: 10px;
@@ -86,7 +100,7 @@ async function submit() {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .login-brand h1 {
@@ -114,12 +128,13 @@ async function submit() {
 }
 
 .login-error {
-  margin-top: 14px;
+  margin-top: 4px;
+  margin-bottom: 14px;
 }
 
 .login-button {
   width: 100%;
-  margin-top: 18px;
+  margin-top: 4px;
 }
 
 .login-hint {
@@ -127,5 +142,6 @@ async function submit() {
   color: #98a2b3;
   font-size: 12px;
   text-align: center;
+  line-height: 1.6;
 }
 </style>

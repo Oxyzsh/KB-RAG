@@ -97,8 +97,9 @@ func TestValidateOK(t *testing.T) {
 	}
 }
 
-func TestLoadWebDefaultsAndToken(t *testing.T) {
-	t.Setenv("KB_RAG_WEB_TOKEN", "0123456789abcdef")
+func TestLoadWebDefaultsAndAdminEnv(t *testing.T) {
+	t.Setenv("KB_RAG_ADMIN_USER", "root")
+	t.Setenv("KB_RAG_ADMIN_PASSWORD", "0123456789abcdef")
 	path := writeConfig(t, "llm:\n  base_url: http://localhost:9999\n  model: test-llm\n")
 	cfg, err := Load(path)
 	if err != nil {
@@ -116,8 +117,19 @@ func TestLoadWebDefaultsAndToken(t *testing.T) {
 	if cfg.Web.FrontendDir != "./fronted/dist" {
 		t.Errorf("web.frontend_dir = %q", cfg.Web.FrontendDir)
 	}
-	if cfg.WebToken != "0123456789abcdef" {
-		t.Errorf("WebToken = %q", cfg.WebToken)
+	if cfg.AdminUser != "root" || cfg.AdminPassword != "0123456789abcdef" {
+		t.Errorf("AdminUser = %q, AdminPassword set=%v", cfg.AdminUser, cfg.AdminPassword != "")
+	}
+}
+
+func TestLoadAdminUserDefault(t *testing.T) {
+	path := writeConfig(t, "llm:\n  base_url: http://localhost:9999\n  model: test-llm\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AdminUser != "admin" {
+		t.Errorf("AdminUser = %q", cfg.AdminUser)
 	}
 }
 
@@ -138,7 +150,6 @@ func TestValidateServe(t *testing.T) {
 			MaxUploadMB: 20,
 			FrontendDir: frontend,
 		}
-		c.WebToken = "0123456789abcdef"
 		return c
 	}
 	if err := base().Validate("serve"); err != nil {
@@ -152,7 +163,6 @@ func TestValidateServe(t *testing.T) {
 		{"bad port", func(c *Config) { c.Web.Addr = "127.0.0.1:99999" }},
 		{"zero upload limit", func(c *Config) { c.Web.MaxUploadMB = 0 }},
 		{"missing frontend index", func(c *Config) { c.Web.FrontendDir = filepath.Join(dir, "missing") }},
-		{"short token", func(c *Config) { c.WebToken = "short" }},
 		{"missing api key", func(c *Config) { c.APIKey = "" }},
 	}
 	for _, tc := range cases {

@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { getStats, listDocuments } from '../api/client'
 import type { DocumentItem, Stats } from '../api/types'
 import DocumentTable from '../components/DocumentTable.vue'
 import UploadPanel from '../components/UploadPanel.vue'
+import { canEditDocuments } from '../session'
 
 const stats = ref<Stats | null>(null)
 const documents = ref<DocumentItem[]>([])
 const loading = ref(false)
 const error = ref('')
+const canEdit = computed(() => canEditDocuments())
 
 async function load() {
   loading.value = true
@@ -61,14 +63,14 @@ onMounted(load)
           <div class="stat-sub">{{ stats.embedding.dim }} 维 · {{ stats.embedding.chunk_size }} 字符</div>
         </el-card>
         <el-card shadow="never" class="stat-card">
-          <div class="stat-label">库大小</div>
-          <div class="stat-value stat-value-small">{{ formatSize(stats.size_bytes) }}</div>
-          <div class="stat-sub">SQLite 数据文件</div>
+          <div class="stat-label">本租户数据量</div>
+          <div class="stat-value stat-value-small">{{ formatSize(stats.tenant_size_bytes) }}</div>
+          <div class="stat-sub">全库文件 {{ formatSize(stats.size_bytes) }}</div>
         </el-card>
       </div>
 
-      <UploadPanel @uploaded="load" />
-      <DocumentTable :documents="documents" @changed="load" />
+      <UploadPanel v-if="canEdit" @uploaded="load" />
+      <DocumentTable :documents="documents" :can-edit="canEdit" @changed="load" />
     </div>
   </div>
 </template>

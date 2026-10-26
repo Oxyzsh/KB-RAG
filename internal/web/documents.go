@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"kb-rag/internal/ingest"
@@ -12,6 +13,7 @@ import (
 )
 
 func (s *Server) handleUploadDocument(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes+1<<20)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		var maxErr *http.MaxBytesError
@@ -53,22 +55,29 @@ func (s *Server) handleUploadDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	opts := s.ingestOptions
+	opts.TenantID = p.TenantID
 	s.ingestMu.Lock()
-	res := ingest.IngestFile(r.Context(), target, s.store, s.embedder, s.ingestOptions)
+	res := ingest.IngestFile(r.Context(), target, s.store, s.embedder, opts)
 	s.ingestMu.Unlock()
+	name := filepath.Base(target)
+	s.audit(r, p, p.TenantID, "document.upload", name, map[string]any{
+		"outcome": res.Outcome,
+		"chunks":  res.Chunks,
+	})
 	if res.Fatal {
 		s.logger.Error("上传入库失败", "error", res.Err)
 		writeError(w, http.StatusInternalServerError, "入库失败")
 		return
 	}
 
-	info, ok, err := s.store.GetDocument(target)
+	info, ok, err := s.store.GetDocument(r.Context(), p.TenantID, target)
 	if err != nil || !ok {
-		s.logger.Error("读取上传文档失败", "error", err, "path", target)
+		s.logger.Error("读取上传文档失败", "error", err)
 		writeError(w, http.StatusInternalServerError, "读取上传文档失败")
 		return
 	}
-	summary, ok, err := s.summaryByID(r.Context(), info.ID)
+	summary, ok, err := s.store.GetDocumentSummaryByID(r.Context(), p.TenantID, info.ID)
 	if err != nil || !ok {
 		s.logger.Error("读取上传文档摘要失败", "error", err, "id", info.ID)
 		writeError(w, http.StatusInternalServerError, "读取上传文档失败")
@@ -86,12 +95,23 @@ func parseDocumentID(r *http.Request) (int64, error) {
 }
 
 func (s *Server) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
 	id, err := parseDocumentID(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "文档 ID 非法")
 		return
 	}
-	if err := s.store.DeleteDocument(r.Context(), id); err != nil {
+	summary, ok, err := s.store.GetDocumentSummaryByID(r.Context(), p.TenantID, id)
+	if err != nil {
+		s.logger.Error("读取文档失败", "error", err, "id", id)
+		writeError(w, http.StatusInternalServerError, "读取文档失败")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "文档不存在")
+		return
+	}
+	if err := s.store.DeleteDocument(r.Context(), p.TenantID, id); err != nil {
 		if errors.Is(err, store.ErrDocumentNotFound) {
 			writeError(w, http.StatusNotFound, "文档不存在")
 			return
@@ -100,16 +120,21 @@ func (s *Server) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "删除文档失败")
 		return
 	}
+	s.audit(r, p, p.TenantID, "document.delete", filepath.Base(summary.Path), map[string]any{
+		"document_id": id,
+		"title":       summary.Title,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleReingestDocument(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
 	id, err := parseDocumentID(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "文档 ID 非法")
 		return
 	}
-	info, ok, err := s.store.GetDocumentByID(r.Context(), id)
+	info, ok, err := s.store.GetDocumentByID(r.Context(), p.TenantID, id)
 	if err != nil {
 		s.logger.Error("读取文档失败", "error", err, "id", id)
 		writeError(w, http.StatusInternalServerError, "读取文档失败")
@@ -124,16 +149,23 @@ func (s *Server) handleReingestDocument(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	opts := s.ingestOptions
+	opts.TenantID = p.TenantID
 	s.ingestMu.Lock()
-	res := ingest.IngestFile(r.Context(), info.Path, s.store, s.embedder, s.ingestOptions)
+	res := ingest.IngestFile(r.Context(), info.Path, s.store, s.embedder, opts)
 	s.ingestMu.Unlock()
+	s.audit(r, p, p.TenantID, "document.reingest", filepath.Base(info.Path), map[string]any{
+		"document_id": id,
+		"outcome":     res.Outcome,
+		"chunks":      res.Chunks,
+	})
 	if res.Fatal {
 		s.logger.Error("重试入库失败", "error", res.Err, "id", id)
 		writeError(w, http.StatusInternalServerError, "重试入库失败")
 		return
 	}
 
-	summary, ok, err := s.summaryByID(r.Context(), id)
+	summary, ok, err := s.store.GetDocumentSummaryByID(r.Context(), p.TenantID, id)
 	if err != nil || !ok {
 		s.logger.Error("读取重试结果失败", "error", err, "id", id)
 		writeError(w, http.StatusInternalServerError, "读取重试结果失败")
