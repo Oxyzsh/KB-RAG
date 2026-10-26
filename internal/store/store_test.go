@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -282,5 +283,59 @@ func TestPathKeyCaseInsensitiveOnWindows(t *testing.T) {
 	}
 	if stats.Documents != 1 {
 		t.Fatalf("同一文件不应重复入库: %+v", stats)
+	}
+}
+
+func TestListDocumentsAndDelete(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	if err := s.ReplaceDocument(ctx, "/docs/a.md", "A", "h1", []ChunkInput{
+		{Seq: 0, Text: "a1", Vector: []float32{1, 0, 0}},
+		{Seq: 1, Text: "a2", Vector: []float32{0, 1, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceDocument(ctx, "/docs/b.md", "B", "h2", []ChunkInput{
+		{Seq: 0, Text: "b1", Vector: []float32{0, 0, 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := s.ListDocuments(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("documents = %+v", list)
+	}
+	if list[0].Path != "/docs/b.md" || list[0].Chunks != 1 {
+		t.Errorf("list[0] = %+v", list[0])
+	}
+	if list[1].Path != "/docs/a.md" || list[1].Chunks != 2 {
+		t.Errorf("list[1] = %+v", list[1])
+	}
+
+	info, ok, err := s.GetDocumentByID(ctx, list[1].ID)
+	if err != nil || !ok || info.Path != "/docs/a.md" {
+		t.Fatalf("GetDocumentByID = %+v, ok=%v, err=%v", info, ok, err)
+	}
+
+	if err := s.DeleteDocument(ctx, list[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.GetDocument("/docs/a.md"); err != nil || ok {
+		t.Fatalf("删除后仍能查到文档: ok=%v err=%v", ok, err)
+	}
+	if err := s.DeleteDocument(ctx, list[1].ID); !errors.Is(err, ErrDocumentNotFound) {
+		t.Fatalf("重复删除错误 = %v", err)
+	}
+
+	stats, err := s.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Chunks != 1 {
+		t.Fatalf("级联删除后 chunks = %d", stats.Chunks)
 	}
 }

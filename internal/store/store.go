@@ -68,6 +68,18 @@ type Stats struct {
 	Meta            EmbeddingMeta
 }
 
+type DocumentSummary struct {
+	ID        int64
+	Path      string
+	Title     string
+	Status    string
+	Error     string
+	UpdatedAt string
+	Chunks    int
+}
+
+var ErrDocumentNotFound = errors.New("文档不存在")
+
 func Open(path string) (*Store, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -418,6 +430,56 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	}
 	stats.Meta = meta
 	return stats, nil
+}
+
+func (s *Store) ListDocuments(ctx context.Context) ([]DocumentSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT d.id,d.path,d.title,d.status,d.error,d.updated_at,COUNT(c.id)
+		FROM documents d LEFT JOIN chunks c ON c.doc_id=d.id
+		GROUP BY d.id,d.path,d.title,d.status,d.error,d.updated_at
+		ORDER BY d.updated_at DESC, d.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DocumentSummary
+	for rows.Next() {
+		var d DocumentSummary
+		if err := rows.Scan(&d.ID, &d.Path, &d.Title, &d.Status, &d.Error, &d.UpdatedAt, &d.Chunks); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetDocumentByID(ctx context.Context, id int64) (DocumentInfo, bool, error) {
+	var info DocumentInfo
+	err := s.db.QueryRowContext(ctx, `SELECT id,path,title,content_hash,status,error,updated_at
+		FROM documents WHERE id=?`, id).
+		Scan(&info.ID, &info.Path, &info.Title, &info.Hash, &info.Status, &info.Error, &info.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DocumentInfo{}, false, nil
+	}
+	if err != nil {
+		return DocumentInfo{}, false, err
+	}
+	return info, true, nil
+}
+
+func (s *Store) DeleteDocument(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM documents WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrDocumentNotFound
+	}
+	return nil
 }
 
 func (s *Store) dim() (int, error) {
