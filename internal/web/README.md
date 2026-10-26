@@ -35,3 +35,8 @@ Authorization: Bearer <KB_RAG_WEB_TOKEN>
 ## 测试
 
 `server_test.go`、`documents_test.go`、`ask_test.go` 使用临时 SQLite、临时上传目录、假嵌入与假 LLM 覆盖认证、上传、列表、删除、重试与问答。
+
+## 状态
+
+- 后端 API、认证、上传、列表、删除、重试、问答已实现；
+- 前端构建与手工冒烟在 `docs/superpowers/plans/2026-10-26-KB-RAG-web-frontend.md` 中执行。
