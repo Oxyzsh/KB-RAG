@@ -80,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /documents", s.handleUploadDocument)
 	api.HandleFunc("DELETE /documents/{id}", s.handleDeleteDocument)
 	api.HandleFunc("POST /documents/{id}/reingest", s.handleReingestDocument)
+	api.HandleFunc("POST /ask", s.handleAsk)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", s.withAuth(http.StripPrefix("/api", api)))
