@@ -4,26 +4,53 @@ KB-RAG 的 HTTP API 与静态文件服务，由 `KB-RAG serve` 启动。
 
 ## 认证
 
-除 `GET /api/health` 外，所有 API 要求：
+- `POST /api/login` 公开，请求 `{"tenant":"default","username":"...","password":"..."}`，返回会话令牌与用户信息。
+- 除 `GET /api/health` 与 `POST /api/login` 外，所有 API 要求：
 
 ```http
-Authorization: Bearer <KB_RAG_WEB_TOKEN>
+Authorization: Bearer <会话令牌>
 ```
 
-令牌只从环境变量读取，至少 16 个字符；使用常量时间比较，不写日志。
+- 密码使用 PBKDF2-SHA256（600k 次、随机盐）哈希；令牌 32 字节随机生成，数据库只存 SHA-256 摘要，有效期 12 小时。
+- 登录按 IP + 租户 + 用户名限流（5 次 / 5 分钟），并对未知用户执行固定成本校验以降低时序差异。
+- 令牌不写日志、不回显。
+
+## 角色
+
+| 角色 | 权限 |
+|------|------|
+| `admin` | 本租户用户管理、审计查看、文档读写 |
+| `editor` | 文档上传/删除/重试、问答与查看 |
+| `viewer` | 问答、文档列表与统计 |
+
+超级管理员（`is_super`）额外可创建租户、重置任一租户管理员密码、查看全局审计。
 
 ## API
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/health` | 公开健康检查 |
-| GET | `/api/session` | 校验令牌 |
-| GET | `/api/stats` | 文档/片段/模型/库大小 |
-| GET | `/api/documents` | 文档列表 |
-| POST | `/api/documents` | multipart 字段 `file`，上传并入库 |
-| DELETE | `/api/documents/{id}` | 只删索引，源文件保留 |
-| POST | `/api/documents/{id}/reingest` | 重试/重新入库 |
-| POST | `/api/ask` | `{"question":"...","top_k":8}` |
+| 方法 | 路径 | 角色 | 说明 |
+|------|------|------|------|
+| GET | `/api/health` | 公开 | 健康检查 |
+| POST | `/api/login` | 公开 | 登录并返回令牌 |
+| POST | `/api/logout` | 登录 | 删除当前会话 |
+| GET | `/api/session` | 登录 | 当前用户/租户/角色 |
+| GET | `/api/stats` | 登录 | 本租户文档/片段/模型/数据量 |
+| GET | `/api/documents` | 登录 | 本租户文档列表 |
+| POST | `/api/documents` | admin/editor | multipart 字段 `file`，上传并入库 |
+| DELETE | `/api/documents/{id}` | admin/editor | 只删索引，源文件保留 |
+| POST | `/api/documents/{id}/reingest` | admin/editor | 重试/重新入库 |
+| POST | `/api/ask` | 登录 | `{"question":"...","top_k":8}` |
+| GET | `/api/users` | admin | 本租户用户列表 |
+| POST | `/api/users` | admin | 创建用户 |
+| PATCH | `/api/users/{id}` | admin | 修改角色或重置密码 |
+| DELETE | `/api/users/{id}` | admin | 删除用户 |
+| GET | `/api/tenants` | admin | 本租户；超级管理员返回全部 |
+| POST | `/api/tenants` | super | 创建租户及首个管理员 |
+| POST | `/api/tenants/{slug}/admin/reset` | super | 重置指定租户管理员密码 |
+| GET | `/api/audit` | admin | 本租户审计；super 可加 `scope=all` |
+
+- 跨租户资源统一返回 404；角色不足返回 403。
+- 所有 `/api/*` 响应带 `Cache-Control: no-store`。
+- 审计为 best-effort：写入失败只记应用日志，不阻断业务。
 
 ## 上传
 
@@ -34,9 +61,9 @@ Authorization: Bearer <KB_RAG_WEB_TOKEN>
 
 ## 测试
 
-`server_test.go`、`documents_test.go`、`ask_test.go` 使用临时 SQLite、临时上传目录、假嵌入与假 LLM 覆盖认证、上传、列表、删除、重试与问答。
+`server_test.go`、`documents_test.go`、`ask_test.go`、`roles_test.go`、`users_test.go`、`tenants_test.go`、`audit_test.go` 使用临时 SQLite、临时上传目录、假嵌入与假 LLM 覆盖登录、会话、角色矩阵、租户隔离、上传、删除、重试、问答、用户/租户管理与审计。
 
 ## 状态
 
-- 后端 API、认证、上传、列表、删除、重试、问答已实现；
-- 前端构建与手工冒烟在 `docs/superpowers/plans/2026-10-26-KB-RAG-web-frontend.md` 中执行。
+- 账号、角色、多租户、审计日志已实现；
+- v2→v3 自动迁移在 `internal/store` 中实现。

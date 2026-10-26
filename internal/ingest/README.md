@@ -10,6 +10,7 @@ func Run(ctx context.Context, root string, st Store, emb Embedder, opt Options) 
 
 ```go
 type Options struct {
+    TenantID  int64
     Model     string
     ChunkSize int
     Overlap   int
@@ -39,7 +40,7 @@ type FileResult struct {
 func IngestFile(ctx context.Context, path string, st Store, emb Embedder, opt Options) FileResult
 ```
 
-调用前必须已执行 `Store.InitMeta`。Web 上传与重试使用该函数；`Run` 对目录扫描也复用同一内部逻辑。
+调用前必须已执行 `Store.InitMeta`。Web 上传与重试使用该函数；`Run` 对目录扫描也复用同一内部逻辑。`Options.TenantID` 决定写入哪个租户，调用方需先通过 `store.TenantBySlug` 解析。
 
 ## 扫描规则
 
