@@ -137,3 +137,34 @@ func TestRunBadDocumentDoesNotBlockOthers(t *testing.T) {
 		t.Fatalf("summary = %+v", summary)
 	}
 }
+
+func TestIngestFile(t *testing.T) {
+	st, root, emb := setup(t)
+	if err := st.InitMeta("bge-m3", 500); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "a.md")
+	writeDoc(t, path, "# 标题\n\n一段足够长的正文内容。\n")
+	opt := Options{Model: "bge-m3", ChunkSize: 500, Overlap: 80, Logger: discardLogger()}
+	ctx := context.Background()
+
+	res := IngestFile(ctx, path, st, emb, opt)
+	if res.Outcome != OutcomeOK || res.Chunks == 0 || res.Err != nil {
+		t.Fatalf("首次 IngestFile = %+v", res)
+	}
+	res = IngestFile(ctx, path, st, emb, opt)
+	if res.Outcome != OutcomeSkipped {
+		t.Fatalf("第二次 IngestFile = %+v", res)
+	}
+
+	writeDoc(t, path, "# 标题\n\n修改后的正文内容，足够长。\n")
+	emb.fail = true
+	res = IngestFile(ctx, path, st, emb, opt)
+	if res.Outcome != OutcomeFailed || res.Err == nil {
+		t.Fatalf("失败 IngestFile = %+v", res)
+	}
+	info, ok, err := st.GetDocument(path)
+	if err != nil || !ok || info.Status != "failed" {
+		t.Fatalf("失败状态 = %+v, ok=%v, err=%v", info, ok, err)
+	}
+}

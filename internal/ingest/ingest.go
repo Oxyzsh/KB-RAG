@@ -43,17 +43,17 @@ type Summary struct {
 	FailedPaths []string
 }
 
-type fileResult struct {
-	outcome string
-	chunks  int
-	err     error
-	fatal   error
+type FileResult struct {
+	Outcome string
+	Chunks  int
+	Err     error
+	Fatal   bool
 }
 
 const (
-	outcomeOK      = "ok"
-	outcomeSkipped = "skipped"
-	outcomeFailed  = "failed"
+	OutcomeOK      = "ok"
+	OutcomeSkipped = "skipped"
+	OutcomeFailed  = "failed"
 )
 
 func Run(ctx context.Context, root string, st Store, emb Embedder, opt Options) (Summary, error) {
@@ -99,20 +99,20 @@ func Run(ctx context.Context, root string, st Store, emb Embedder, opt Options) 
 		rel := displayPath(absRoot, path)
 		start := time.Now()
 		res := processFile(ctx, st, emb, opt, path, rel)
-		if res.fatal != nil {
-			return res.fatal
+		if res.Fatal {
+			return res.Err
 		}
-		switch res.outcome {
-		case outcomeOK:
+		switch res.Outcome {
+		case OutcomeOK:
 			summary.Succeeded++
-			opt.Logger.Info("文档入库", "path", rel, "chunks", res.chunks, "duration_ms", time.Since(start).Milliseconds())
-		case outcomeSkipped:
+			opt.Logger.Info("文档入库", "path", rel, "chunks", res.Chunks, "duration_ms", time.Since(start).Milliseconds())
+		case OutcomeSkipped:
 			summary.Skipped++
 			opt.Logger.Info("文档未变化，跳过", "path", rel)
-		case outcomeFailed:
+		case OutcomeFailed:
 			summary.Failed++
 			summary.FailedPaths = append(summary.FailedPaths, rel)
-			opt.Logger.Error("文档入库失败", "path", rel, "error", res.err)
+			opt.Logger.Error("文档入库失败", "path", rel, "error", res.Err)
 		}
 		return nil
 	})
@@ -135,20 +135,29 @@ func displayPath(root, path string) string {
 	return filepath.ToSlash(rel)
 }
 
-func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path, rel string) fileResult {
+// IngestFile 对单个文件执行与 Run 相同的解析、切分、嵌入与事务写入。
+// 调用方必须先通过 Store.InitMeta 初始化模型与 chunk_size。
+func IngestFile(ctx context.Context, path string, st Store, emb Embedder, opt Options) FileResult {
+	if opt.Logger == nil {
+		opt.Logger = slog.Default()
+	}
+	return processFile(ctx, st, emb, opt, path, filepath.Base(path))
+}
+
+func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path, rel string) FileResult {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return fileResult{outcome: outcomeFailed, err: err}
+		return FileResult{Outcome: OutcomeFailed, Err: err}
 	}
 	sum := sha256.Sum256(raw)
 	hash := hex.EncodeToString(sum[:])
 
 	existing, exists, err := st.GetDocument(path)
 	if err != nil {
-		return fileResult{outcome: outcomeFailed, err: err}
+		return FileResult{Outcome: OutcomeFailed, Err: err}
 	}
 	if exists && existing.Status == "ok" && existing.Hash == hash {
-		return fileResult{outcome: outcomeSkipped}
+		return FileResult{Outcome: OutcomeSkipped}
 	}
 
 	doc, loadErr := loader.Load(path)
@@ -161,14 +170,14 @@ func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path,
 	}
 	if loadErr != nil {
 		markFailed(ctx, st, opt, path, rel, title, hash, loadErr.Error())
-		return fileResult{outcome: outcomeFailed, err: loadErr}
+		return FileResult{Outcome: OutcomeFailed, Err: loadErr}
 	}
 
 	chunks := chunker.Split(doc, opt.ChunkSize, opt.Overlap)
 	if len(chunks) == 0 {
 		err := fmt.Errorf("未切分出有效片段")
 		markFailed(ctx, st, opt, path, rel, title, hash, err.Error())
-		return fileResult{outcome: outcomeFailed, err: err}
+		return FileResult{Outcome: OutcomeFailed, Err: err}
 	}
 	texts := make([]string, len(chunks))
 	for i, chunk := range chunks {
@@ -177,22 +186,22 @@ func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path,
 	vectors, err := emb.Embed(ctx, texts)
 	if err != nil {
 		if ctx.Err() != nil {
-			return fileResult{outcome: outcomeFailed, err: ctx.Err(), fatal: ctx.Err()}
+			return FileResult{Outcome: OutcomeFailed, Err: ctx.Err(), Fatal: true}
 		}
 		markFailed(ctx, st, opt, path, rel, title, hash, err.Error())
-		return fileResult{outcome: outcomeFailed, err: err}
+		return FileResult{Outcome: OutcomeFailed, Err: err}
 	}
 	if len(vectors) != len(chunks) {
 		err := fmt.Errorf("嵌入返回 %d 个向量，期望 %d 个", len(vectors), len(chunks))
 		markFailed(ctx, st, opt, path, rel, title, hash, err.Error())
-		return fileResult{outcome: outcomeFailed, err: err}
+		return FileResult{Outcome: OutcomeFailed, Err: err}
 	}
 	if err := validateVectors(vectors); err != nil {
 		markFailed(ctx, st, opt, path, rel, title, hash, err.Error())
-		return fileResult{outcome: outcomeFailed, err: err}
+		return FileResult{Outcome: OutcomeFailed, Err: err}
 	}
 	if err := st.SetDim(len(vectors[0])); err != nil {
-		return fileResult{outcome: outcomeFailed, err: err, fatal: err}
+		return FileResult{Outcome: OutcomeFailed, Err: err, Fatal: true}
 	}
 
 	inputs := make([]store.ChunkInput, len(chunks))
@@ -201,12 +210,12 @@ func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path,
 	}
 	if err := st.ReplaceDocument(ctx, path, title, hash, inputs); err != nil {
 		if ctx.Err() != nil {
-			return fileResult{outcome: outcomeFailed, err: ctx.Err(), fatal: ctx.Err()}
+			return FileResult{Outcome: OutcomeFailed, Err: ctx.Err(), Fatal: true}
 		}
 		markFailed(ctx, st, opt, path, rel, title, hash, err.Error())
-		return fileResult{outcome: outcomeFailed, err: err}
+		return FileResult{Outcome: OutcomeFailed, Err: err}
 	}
-	return fileResult{outcome: outcomeOK, chunks: len(chunks)}
+	return FileResult{Outcome: OutcomeOK, Chunks: len(chunks)}
 }
 
 func validateVectors(vectors [][]float32) error {

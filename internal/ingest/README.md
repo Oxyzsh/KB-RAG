@@ -26,6 +26,21 @@ type Summary struct {
 
 `Store` 与 `Embedder` 都是窄接口，便于测试和替换实现；生产环境分别由 `internal/store` 与 `internal/ingest/embedder` 提供。
 
+单文件入口：
+
+```go
+type FileResult struct {
+    Outcome string // ok / skipped / failed
+    Chunks  int
+    Err     error
+    Fatal   bool
+}
+
+func IngestFile(ctx context.Context, path string, st Store, emb Embedder, opt Options) FileResult
+```
+
+调用前必须已执行 `Store.InitMeta`。Web 上传与重试使用该函数；`Run` 对目录扫描也复用同一内部逻辑。
+
 ## 扫描规则
 
 - 递归遍历目录，跳过隐藏目录（`.` 开头，包含 `.git`）与 `node_modules`。
