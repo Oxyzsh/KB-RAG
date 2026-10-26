@@ -37,6 +37,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runAsk(ctx, args[1:], stdout, stderr)
 	case "stats":
 		return runStats(ctx, args[1:], stdout, stderr)
+	case "serve":
+		return runServe(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return exitOK
@@ -52,6 +54,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  KB-RAG ingest [--config 路径] <目录>")
 	fmt.Fprintln(w, "  KB-RAG ask [--config 路径] [--top-k N] \"问题\"")
 	fmt.Fprintln(w, "  KB-RAG stats [--config 路径]")
+	fmt.Fprintln(w, "  KB-RAG serve [--config 路径]")
 }
 
 func newFlagSet(name string, stderr io.Writer, usageLine string) (*flag.FlagSet, *string) {
