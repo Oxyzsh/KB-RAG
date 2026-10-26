@@ -25,7 +25,7 @@ func Split(doc loader.Document, size, overlap int) []Chunk
 - 少于 10 字符的碎片丢弃；
 - `Seq` 在单文档内从 0 递增。
 
-完整规则、示例与限制见 [文档切分规则](../../../docs/chunking.md)。
+完整规则、示例与限制见 [文档切分规则](../../../docs/文档切分规则.md)。
 
 ## 测试
 
@@ -33,6 +33,6 @@ func Split(doc loader.Document, size, overlap int) []Chunk
 
 ## 相关文档
 
-- [文档切分规则](../../../docs/chunking.md)
+- [文档切分规则](../../../docs/文档切分规则.md)
 - [文档解析](../loader/README.md)
 - [入库管道](../README.md)
