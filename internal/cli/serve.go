@@ -113,6 +113,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	})
 
 	fmt.Fprintf(stdout, "Web 服务已启动：http://%s（Ctrl+C 停止）\n", cfg.Web.Addr)
+	srv.Start(ctx)
 	if err := srv.ListenAndServe(ctx, cfg.Web.Addr); err != nil {
 		if interrupted(ctx) {
 			return exitInterrupted

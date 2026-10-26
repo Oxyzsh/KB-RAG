@@ -97,3 +97,65 @@ func TestChatErrorDoesNotEchoResponseBody(t *testing.T) {
 		t.Fatal("错误信息回显了响应体")
 	}
 }
+
+func TestChatStream(t *testing.T) {
+	var got chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		for _, text := range []string{"员工", "满1年", "享5天年假[1]。"} {
+			_, _ = w.Write([]byte("data: " + `{"choices":[{"delta":{"content":"` + text + `"}}]}` + "\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "m", "k")
+	var answer strings.Builder
+	err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "q"}}, func(delta string) error {
+		answer.WriteString(delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if answer.String() != "员工满1年享5天年假[1]。" {
+		t.Fatalf("answer = %q", answer.String())
+	}
+	if !got.Stream {
+		t.Fatal("请求未设置 stream=true")
+	}
+}
+
+func TestChatStreamEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+	client := New(server.URL, "m", "k")
+	if err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "q"}}, func(string) error { return nil }); err == nil {
+		t.Fatal("空流应报错")
+	}
+}
+
+func TestChatStreamHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "secret document text", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	client := New(server.URL, "m", "k")
+	err := client.ChatStream(context.Background(), []Message{{Role: "user", Content: "q"}}, func(string) error { return nil })
+	if err == nil {
+		t.Fatal("期望错误")
+	}
+	if strings.Contains(err.Error(), "secret document text") {
+		t.Fatal("错误信息回显了响应体")
+	}
+}

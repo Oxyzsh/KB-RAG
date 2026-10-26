@@ -1,24 +1,23 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import AppShell from '../components/AppShell.vue'
-import AdminView from '../views/AdminView.vue'
-import ChatView from '../views/ChatView.vue'
-import DocumentsView from '../views/DocumentsView.vue'
-import LoginView from '../views/LoginView.vue'
 import { getToken } from '../api/client'
 import { loadSession } from '../session'
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/login', component: LoginView },
+    { path: '/login', component: () => import('../views/LoginView.vue') },
     {
       path: '/',
-      component: AppShell,
+      component: () => import('../components/AppShell.vue'),
       children: [
         { path: '', redirect: '/chat' },
-        { path: 'chat', component: ChatView },
-        { path: 'documents', component: DocumentsView },
-        { path: 'admin', component: AdminView, meta: { requiresAdmin: true } },
+        { path: 'chat', component: () => import('../views/ChatView.vue') },
+        { path: 'documents', component: () => import('../views/DocumentsView.vue') },
+        {
+          path: 'admin',
+          component: () => import('../views/AdminView.vue'),
+          meta: { requiresAdmin: true },
+        },
       ],
     },
   ],

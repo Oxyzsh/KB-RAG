@@ -38,7 +38,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int
 - `ingest`：按租户调用 `ingest.Run`，打印“成功/跳过/失败”和失败路径；有失败返回 1。
 - `ask`：调用 `query.Service.WithTenant(...).Ask`；生成失败但检索成功时，仍把检索片段打印到 stdout，并在 stderr 记警告，返回 1。
 - `stats`：调用 `store.Stats(ctx, tenantID)`；同时打印本租户逻辑数据量与全库文件大小。
-- `serve`：启动时清理过期会话；`users` 为空则创建初始超级管理员；随后阻塞运行 Web 服务。
+- `serve`：启动时清理过期会话、把中断任务标记失败并启动异步入库 worker；`users` 为空则创建初始超级管理员；随后阻塞运行 Web 服务。
 
 ## 退出码
 

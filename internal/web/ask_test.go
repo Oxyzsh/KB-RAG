@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +71,64 @@ func TestAskValidation(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("body=%s status=%d", body, rec.Code)
 		}
+	}
+}
+
+func TestAskStream(t *testing.T) {
+	env := newTestServer(t)
+	rec := uploadDoc(t, env, "editor1", "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d", rec.Code)
+	}
+
+	rec = env.callAs(t, "viewer1", "POST", "/api/ask/stream", askBody(t, "年假怎么请"), "application/json")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stream status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("content-type = %q", ct)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"event: citations", "event: delta", "event: done", "员工满1年", "享5天年假[1]。", "年假.md"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("SSE body 缺少 %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestAskStreamValidation(t *testing.T) {
+	env := newTestServer(t)
+	rec := env.callAs(t, "viewer1", "POST", "/api/ask/stream", []byte(`{"question":"  "}`), "application/json")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAskStreamEmptyKnowledgeBase(t *testing.T) {
+	env := newTestServer(t)
+	rec := env.callAs(t, "viewer1", "POST", "/api/ask/stream", askBody(t, "年假怎么请"), "application/json")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAskStreamGenerationFailure(t *testing.T) {
+	env := newTestServer(t)
+	if rec := uploadDoc(t, env, "editor1", "年假.md", []byte("# 休假\n\n员工满1年享5天年假。\n")); rec.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d", rec.Code)
+	}
+	env.llmFake.fail = true
+
+	rec := env.callAs(t, "viewer1", "POST", "/api/ask/stream", askBody(t, "年假怎么请"), "application/json")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stream status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: citations") || !strings.Contains(body, "event: error") {
+		t.Fatalf("SSE body = %s", body)
+	}
+	if strings.Contains(body, "event: done") {
+		t.Fatalf("生成失败不应发送 done: %s", body)
 	}
 }
 

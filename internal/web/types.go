@@ -55,6 +55,22 @@ type uploadResponse struct {
 	Outcome  string      `json:"outcome"`
 }
 
+type jobDTO struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	Stage     string `json:"stage"`
+	Chunks    int    `json:"chunks"`
+	Error     string `json:"error"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type jobResponse struct {
+	Job jobDTO `json:"job"`
+}
+
 type errorResponse struct {
 	Error string `json:"error"`
 }

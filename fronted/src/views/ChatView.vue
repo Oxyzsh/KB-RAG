@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import CitationList from '../components/CitationList.vue'
-import { ask } from '../api/client'
+import { askStream } from '../api/client'
 import type { Citation } from '../api/types'
 import { renderMarkdown } from '../markdown'
 import { session } from '../session'
@@ -14,6 +14,7 @@ interface ChatItem {
   citations?: Citation[]
   warning?: string
   error?: boolean
+  streaming?: boolean
 }
 
 const input = ref('')
@@ -21,6 +22,11 @@ const topK = ref(8)
 const loading = ref(false)
 const messages = ref<ChatItem[]>([])
 const listRef = ref<HTMLElement | null>(null)
+let controller: AbortController | null = null
+
+function nextID(): string {
+  return Math.random().toString(36).substring(2, 9)
+}
 
 async function scrollToBottom() {
   await nextTick()
@@ -29,51 +35,69 @@ async function scrollToBottom() {
   }
 }
 
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === 'AbortError'
+}
+
+function stopGenerating() {
+  controller?.abort()
+}
+
 async function send() {
   const question = input.value.trim()
   if (!question || loading.value) {
     return
   }
-  messages.value.push({
-    id: Math.random().toString(36).substring(2, 9),
-    role: 'user',
-    text: question,
-  })
+  messages.value.push({ id: nextID(), role: 'user', text: question })
+  messages.value.push({ id: nextID(), role: 'assistant', text: '', streaming: true })
+  const msg = messages.value[messages.value.length - 1]
   input.value = ''
   loading.value = true
+  controller = new AbortController()
   await scrollToBottom()
+
   try {
-    const res = await ask(question, topK.value)
-    messages.value.push({
-      id: Math.random().toString(36).substring(2, 9),
-      role: 'assistant',
-      text: res.answer,
-      citations: res.citations,
-      warning: res.warning,
-    })
+    await askStream(
+      question,
+      topK.value,
+      {
+        onCitations: (citations) => {
+          msg.citations = citations
+        },
+        onDelta: (text) => {
+          msg.text += text
+          void scrollToBottom()
+        },
+        onDone: (answer) => {
+          msg.text = answer
+          msg.streaming = false
+        },
+        onError: (message) => {
+          msg.warning = message
+          msg.streaming = false
+        },
+      },
+      controller.signal,
+    )
   } catch (e) {
-    messages.value.push({
-      id: Math.random().toString(36).substring(2, 9),
-      role: 'assistant',
-      text: e instanceof Error ? e.message : '请求失败',
-      error: true,
-    })
+    if (isAbortError(e)) {
+      msg.warning = '已停止生成'
+    } else {
+      msg.error = true
+      msg.text = e instanceof Error ? e.message : '请求失败'
+    }
   } finally {
+    msg.streaming = false
     loading.value = false
+    controller = null
     await scrollToBottom()
   }
 }
 
 function clearMessages() {
+  stopGenerating()
   messages.value = []
 }
-
-watch(
-  () => session.user?.tenant_slug,
-  () => {
-    messages.value = []
-  },
-)
 
 async function copyAnswer(text: string) {
   try {
@@ -83,6 +107,18 @@ async function copyAnswer(text: string) {
     ElMessage.error('复制失败，请手动选择复制')
   }
 }
+
+watch(
+  () => session.user?.tenant_slug,
+  () => {
+    stopGenerating()
+    messages.value = []
+  },
+)
+
+onBeforeUnmount(() => {
+  stopGenerating()
+})
 </script>
 
 <template>
@@ -120,6 +156,7 @@ async function copyAnswer(text: string) {
         <div class="bubble">
           <template v-if="message.role === 'assistant'">
             <div v-if="message.text" class="markdown" v-html="renderMarkdown(message.text)" />
+            <div v-else-if="message.streaming" class="bubble-loading">正在检索并生成…</div>
             <el-alert
               v-if="message.warning"
               :title="message.warning"
@@ -136,17 +173,12 @@ async function copyAnswer(text: string) {
           <template v-else>{{ message.text }}</template>
         </div>
         <button
-          v-if="message.role === 'assistant' && message.text && !message.error"
+          v-if="message.role === 'assistant' && message.text && !message.streaming && !message.error"
           class="copy-btn"
           @click="copyAnswer(message.text)"
         >
           复制
         </button>
-      </div>
-
-      <div v-if="loading" class="message assistant">
-        <div class="message-label">助手</div>
-        <div class="bubble loading-bubble">正在检索并生成…</div>
       </div>
     </div>
 
@@ -157,13 +189,13 @@ async function copyAnswer(text: string) {
         :autosize="{ minRows: 2, maxRows: 6 }"
         resize="none"
         placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+        :disabled="loading"
         @keydown.enter.exact.prevent="send"
       />
       <div class="composer-actions">
         <span class="shortcut-hint">Enter 发送 / Shift+Enter 换行</span>
-        <el-button type="primary" :loading="loading" :disabled="!input.trim()" @click="send">
-          发送
-        </el-button>
+        <el-button v-if="loading" @click="stopGenerating">停止生成</el-button>
+        <el-button v-else type="primary" :disabled="!input.trim()" @click="send">发送</el-button>
       </div>
     </div>
   </div>
@@ -275,6 +307,11 @@ async function copyAnswer(text: string) {
   color: #b91c1c;
 }
 
+.bubble-loading {
+  color: #6b7280;
+  font-size: 13px;
+}
+
 .message-alert {
   margin-top: 10px;
 }
@@ -291,13 +328,6 @@ async function copyAnswer(text: string) {
 
 .copy-btn:hover {
   color: #2563eb;
-}
-
-.loading-bubble {
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
-  color: #6b7280;
-  font-size: 13px;
 }
 
 .composer {

@@ -31,9 +31,18 @@ var testPasswordHash = sync.OnceValue(func() string {
 	return hash
 })
 
-type fakeEmbedder struct{}
+type fakeEmbedder struct {
+	gate <-chan struct{}
+}
 
 func (f *fakeEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if f.gate != nil {
+		select {
+		case <-f.gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	out := make([][]float32, len(texts))
 	for i, text := range texts {
 		if strings.Contains(text, "年假") {
@@ -54,6 +63,18 @@ func (f *fakeLLM) Chat(ctx context.Context, messages []llm.Message) (string, err
 		return "", errors.New("llm down")
 	}
 	return "员工满1年享5天年假[1]。", nil
+}
+
+func (f *fakeLLM) ChatStream(ctx context.Context, messages []llm.Message, onDelta func(string) error) error {
+	if f.fail {
+		return errors.New("llm down")
+	}
+	for _, part := range []string{"员工满1年", "享5天年假[1]。"} {
+		if err := onDelta(part); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type testEnv struct {

@@ -29,6 +29,7 @@ type Store interface {
 
 type LLM interface {
 	Chat(ctx context.Context, messages []llm.Message) (string, error)
+	ChatStream(ctx context.Context, messages []llm.Message, onDelta func(string) error) error
 }
 
 var (
@@ -66,40 +67,53 @@ func (s *Service) Ask(ctx context.Context, question string) (Result, error) {
 }
 
 func (s *Service) AskWithTopK(ctx context.Context, question string, topK int) (Result, error) {
+	hits, err := s.Retrieve(ctx, question, topK)
+	if err != nil {
+		return Result{}, err
+	}
+	answer, err := s.Generate(ctx, question, hits)
+	if err != nil {
+		return Result{Hits: hits}, err
+	}
+	return Result{Answer: answer, Hits: hits, Generated: true}, nil
+}
+
+// Retrieve 完成问题校验、嵌入与检索，不调用生成服务。
+func (s *Service) Retrieve(ctx context.Context, question string, topK int) ([]store.Hit, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
-		return Result{}, fmt.Errorf("问题不能为空")
+		return nil, fmt.Errorf("问题不能为空")
 	}
 	start := time.Now()
 	meta, err := s.Store.Meta()
 	if err != nil {
-		return Result{}, fmt.Errorf("读取库元信息: %w", err)
+		return nil, fmt.Errorf("读取库元信息: %w", err)
 	}
 	if meta.Model == "" || meta.Dim <= 0 {
-		return Result{}, fmt.Errorf("%w，请先执行 ingest", ErrEmptyStore)
+		return nil, fmt.Errorf("%w，请先执行 ingest", ErrEmptyStore)
 	}
 	if s.EmbedModel != meta.Model {
-		return Result{}, fmt.Errorf("%w：库内为 %q，配置为 %q", ErrModelMismatch, meta.Model, s.EmbedModel)
+		return nil, fmt.Errorf("%w：库内为 %q，配置为 %q", ErrModelMismatch, meta.Model, s.EmbedModel)
 	}
 	vectors, err := s.Embedder.Embed(ctx, []string{question})
 	if err != nil {
-		return Result{}, fmt.Errorf("问题嵌入失败: %w", err)
+		return nil, fmt.Errorf("问题嵌入失败: %w", err)
 	}
 	if len(vectors) != 1 {
-		return Result{}, fmt.Errorf("问题嵌入返回 %d 个向量，期望 1 个", len(vectors))
+		return nil, fmt.Errorf("问题嵌入返回 %d 个向量，期望 1 个", len(vectors))
 	}
 	if len(vectors[0]) != meta.Dim {
-		return Result{}, fmt.Errorf("问题嵌入维度为 %d，库内为 %d", len(vectors[0]), meta.Dim)
+		return nil, fmt.Errorf("问题嵌入维度为 %d，库内为 %d", len(vectors[0]), meta.Dim)
 	}
 	if topK <= 0 {
 		topK = 8
 	}
 	hits, err := s.Store.Search(ctx, s.TenantID, vectors[0], topK)
 	if err != nil {
-		return Result{}, fmt.Errorf("检索失败: %w", err)
+		return nil, fmt.Errorf("检索失败: %w", err)
 	}
 	if len(hits) == 0 {
-		return Result{}, fmt.Errorf("%w，请先执行 ingest", ErrNoResults)
+		return nil, fmt.Errorf("%w，请先执行 ingest", ErrNoResults)
 	}
 	if s.Logger != nil {
 		ids := make([]int64, len(hits))
@@ -110,14 +124,43 @@ func (s *Service) AskWithTopK(ctx context.Context, question string, topK int) (R
 		}
 		s.Logger.Info("检索完成", "question_len", utf8.RuneCountInString(question), "top_k", len(hits), "chunk_ids", ids, "scores", scores, "duration_ms", time.Since(start).Milliseconds())
 	}
-	answer, err := s.LLM.Chat(ctx, []llm.Message{
+	return hits, nil
+}
+
+// Generate 使用检索片段调用非流式生成。
+func (s *Service) Generate(ctx context.Context, question string, hits []store.Hit) (string, error) {
+	answer, err := s.LLM.Chat(ctx, s.messages(question, hits))
+	if err != nil {
+		return "", fmt.Errorf("生成失败: %w", err)
+	}
+	return answer, nil
+}
+
+// GenerateStream 使用检索片段流式生成，每段增量都会回调 onDelta。
+func (s *Service) GenerateStream(ctx context.Context, question string, hits []store.Hit, onDelta func(string) error) (string, error) {
+	var builder strings.Builder
+	err := s.LLM.ChatStream(ctx, s.messages(question, hits), func(delta string) error {
+		builder.WriteString(delta)
+		if onDelta != nil {
+			return onDelta(delta)
+		}
+		return nil
+	})
+	answer := strings.TrimSpace(builder.String())
+	if err != nil {
+		return answer, fmt.Errorf("生成失败: %w", err)
+	}
+	if answer == "" {
+		return "", fmt.Errorf("生成失败: 生成服务返回空答案")
+	}
+	return answer, nil
+}
+
+func (s *Service) messages(question string, hits []store.Hit) []llm.Message {
+	return []llm.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: s.buildUserPrompt(question, hits)},
-	})
-	if err != nil {
-		return Result{Hits: hits}, fmt.Errorf("生成失败: %w", err)
 	}
-	return Result{Answer: answer, Hits: hits, Generated: true}, nil
 }
 
 func (s *Service) buildUserPrompt(question string, hits []store.Hit) string {

@@ -71,6 +71,24 @@ CREATE TABLE IF NOT EXISTS chunks(
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS jobs(
+	id INTEGER PRIMARY KEY,
+	tenant_id INTEGER NOT NULL,
+	user_id INTEGER NOT NULL,
+	username TEXT NOT NULL,
+	action TEXT NOT NULL,
+	path TEXT NOT NULL,
+	name TEXT NOT NULL,
+	status TEXT NOT NULL,
+	stage TEXT NOT NULL DEFAULT '',
+	chunks INTEGER NOT NULL DEFAULT 0,
+	error TEXT NOT NULL DEFAULT '',
+	ip TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id);
+CREATE INDEX IF NOT EXISTS idx_jobs_tenant ON jobs(tenant_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_documents_tenant_updated ON documents(tenant_id, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_documents_tenant_status ON documents(tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
@@ -142,7 +160,28 @@ CREATE INDEX idx_audit_created ON audit_logs(created_at DESC, id DESC);
 CREATE UNIQUE INDEX idx_users_single_super ON users(is_super) WHERE is_super = 1;
 `
 
-func (s *Store) initFreshV3(ctx context.Context) error {
+const schemaV4Jobs = `
+CREATE TABLE jobs(
+	id INTEGER PRIMARY KEY,
+	tenant_id INTEGER NOT NULL,
+	user_id INTEGER NOT NULL,
+	username TEXT NOT NULL,
+	action TEXT NOT NULL,
+	path TEXT NOT NULL,
+	name TEXT NOT NULL,
+	status TEXT NOT NULL,
+	stage TEXT NOT NULL DEFAULT '',
+	chunks INTEGER NOT NULL DEFAULT 0,
+	error TEXT NOT NULL DEFAULT '',
+	ip TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_jobs_status ON jobs(status, id);
+CREATE INDEX idx_jobs_tenant ON jobs(tenant_id, id DESC);
+`
+
+func (s *Store) initFreshV4(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -249,8 +288,8 @@ func (s *Store) migrateV2ToV3(ctx context.Context) error {
 	if chunksAfter != chunksBefore {
 		return fmt.Errorf("片段数量不一致：迁移前 %d，迁移后 %d", chunksBefore, chunksAfter)
 	}
-	if _, err := conn.ExecContext(ctx, `INSERT INTO meta(key,value) VALUES('schema_version',?)
-		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, SchemaVersion); err != nil {
+	if _, err := conn.ExecContext(ctx, `INSERT INTO meta(key,value) VALUES('schema_version','3')
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value`); err != nil {
 		return fmt.Errorf("更新 schema 版本: %w", err)
 	}
 	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
@@ -269,6 +308,22 @@ func (s *Store) migrateV2ToV3(ctx context.Context) error {
 		return fmt.Errorf("迁移后外键未恢复（foreign_keys=%d）", fkAfter)
 	}
 	return nil
+}
+
+func (s *Store) migrateV3ToV4(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, schemaV4Jobs); err != nil {
+		return fmt.Errorf("创建任务表: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key,value) VALUES('schema_version','4')
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value`); err != nil {
+		return fmt.Errorf("更新 schema 版本: %w", err)
+	}
+	return tx.Commit()
 }
 
 func tableExists(db *sql.DB, name string) (bool, error) {

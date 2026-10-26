@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { deleteDocument, reingestDocument } from '../api/client'
-import type { DocumentItem } from '../api/types'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
+import { deleteDocument, getJob, reingestDocumentJob } from '../api/client'
+import type { DocumentItem, Job } from '../api/types'
 
 const props = defineProps<{ documents: DocumentItem[]; canEdit: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const retrying = ref<number | null>(null)
+const retryStage = ref('')
 
 const searchQuery = ref('')
 const statusFilter = ref('all')
@@ -28,20 +30,37 @@ function formatTime(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
+async function waitJob(id: number): Promise<Job> {
+  for (let i = 0; i < 600; i += 1) {
+    const { job } = await getJob(id)
+    retryStage.value = job.stage
+    if (job.status === 'done' || job.status === 'failed' || job.status === 'canceled') {
+      return job
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  throw new Error('任务处理超时')
+}
+
 async function retry(row: DocumentItem) {
   retrying.value = row.id
+  retryStage.value = '排队中'
   try {
-    const res = await reingestDocument(row.id)
-    if (res.outcome === 'failed') {
-      ElMessage.warning(`${row.title || row.name} 重试后仍失败`)
-    } else {
+    const { job } = await reingestDocumentJob(row.id)
+    const done = await waitJob(job.id)
+    if (done.status === 'done') {
       ElMessage.success(`${row.title || row.name} 已重新入库`)
+    } else if (done.status === 'canceled') {
+      ElMessage.info(`${row.title || row.name} 已取消`)
+    } else {
+      ElMessage.warning(`${row.title || row.name} 重试失败：${done.error || '未知错误'}`)
     }
     emit('changed')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '重试失败')
   } finally {
     retrying.value = null
+    retryStage.value = ''
   }
 }
 
@@ -116,7 +135,7 @@ async function remove(row: DocumentItem) {
             :loading="retrying === row.id"
             @click="retry(row as DocumentItem)"
           >
-            重试
+            {{ retrying === row.id ? retryStage || '处理中' : '重试' }}
           </el-button>
           <el-button size="small" link type="danger" @click="remove(row as DocumentItem)">
             删除

@@ -47,6 +47,24 @@ export interface UploadResponse {
   outcome: 'ok' | 'failed' | 'skipped'
 }
 
+export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled'
+
+export interface Job {
+  id: number
+  name: string
+  action: string
+  status: JobStatus
+  stage: string
+  chunks: number
+  error: string
+  created_at: string
+  updated_at: string
+}
+
+export interface JobResponse {
+  job: Job
+}
+
 export interface DocumentListResponse {
   documents: DocumentItem[]
 }

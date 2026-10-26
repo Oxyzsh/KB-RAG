@@ -52,6 +52,9 @@ type Server struct {
 	sessionTTL     time.Duration
 	limiter        *loginLimiter
 	hashSem        chan struct{}
+	workerMu       sync.Mutex
+	workerCancel   context.CancelFunc
+	jobCancels     map[int64]context.CancelFunc
 }
 
 func New(opts Options) *Server {
@@ -78,6 +81,7 @@ func New(opts Options) *Server {
 		sessionTTL: opts.SessionTTL,
 		limiter:    newLoginLimiter(5, 5*time.Minute),
 		hashSem:    make(chan struct{}, 4),
+		jobCancels: make(map[int64]context.CancelFunc),
 	}
 }
 
@@ -90,7 +94,12 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /documents", s.requireRoles(s.handleUploadDocument, "admin", "editor"))
 	api.HandleFunc("DELETE /documents/{id}", s.requireRoles(s.handleDeleteDocument, "admin", "editor"))
 	api.HandleFunc("POST /documents/{id}/reingest", s.requireRoles(s.handleReingestDocument, "admin", "editor"))
+	api.HandleFunc("POST /jobs/documents", s.requireRoles(s.handleUploadJob, "admin", "editor"))
+	api.HandleFunc("POST /jobs/documents/{id}/reingest", s.requireRoles(s.handleReingestJob, "admin", "editor"))
+	api.HandleFunc("GET /jobs/{id}", s.requireRoles(s.handleGetJob, "admin", "editor"))
+	api.HandleFunc("DELETE /jobs/{id}", s.requireRoles(s.handleCancelJob, "admin", "editor"))
 	api.HandleFunc("POST /ask", s.handleAsk)
+	api.HandleFunc("POST /ask/stream", s.handleAskStream)
 	api.HandleFunc("GET /users", s.requireRoles(s.handleListUsers, "admin"))
 	api.HandleFunc("POST /users", s.requireRoles(s.handleCreateUser, "admin"))
 	api.HandleFunc("PATCH /users/{id}", s.requireRoles(s.handleUpdateUser, "admin"))
@@ -192,6 +201,16 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(b)
 	w.bytes += n
 	return n, err
+}
+
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func (s *Server) withLogging(next http.Handler) http.Handler {

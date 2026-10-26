@@ -35,6 +35,8 @@ type Options struct {
 	ChunkSize int
 	Overlap   int
 	Logger    *slog.Logger
+	// Progress 可选：报告当前处理阶段，用于异步任务展示。
+	Progress func(stage string)
 }
 
 type Summary struct {
@@ -146,6 +148,7 @@ func IngestFile(ctx context.Context, path string, st Store, emb Embedder, opt Op
 }
 
 func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path, rel string) FileResult {
+	reportProgress(opt, "读取文件")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return FileResult{Outcome: OutcomeFailed, Err: err}
@@ -173,6 +176,7 @@ func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path,
 		markFailed(ctx, st, opt, path, rel, title, hash, loadErr.Error())
 		return FileResult{Outcome: OutcomeFailed, Err: loadErr}
 	}
+	reportProgress(opt, "切分文档")
 
 	chunks := chunker.Split(doc, opt.ChunkSize, opt.Overlap)
 	if len(chunks) == 0 {
@@ -184,6 +188,7 @@ func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path,
 	for i, chunk := range chunks {
 		texts[i] = chunk.Text
 	}
+	reportProgress(opt, "生成向量")
 	vectors, err := emb.Embed(ctx, texts)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -209,6 +214,7 @@ func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path,
 	for i, chunk := range chunks {
 		inputs[i] = store.ChunkInput{Seq: chunk.Seq, Heading: chunk.Heading, Text: chunk.Text, Vector: vectors[i]}
 	}
+	reportProgress(opt, "写入索引")
 	if err := st.ReplaceDocument(ctx, opt.TenantID, path, title, hash, inputs); err != nil {
 		if ctx.Err() != nil {
 			return FileResult{Outcome: OutcomeFailed, Err: ctx.Err(), Fatal: true}
@@ -217,6 +223,12 @@ func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path,
 		return FileResult{Outcome: OutcomeFailed, Err: err}
 	}
 	return FileResult{Outcome: OutcomeOK, Chunks: len(chunks)}
+}
+
+func reportProgress(opt Options, stage string) {
+	if opt.Progress != nil {
+		opt.Progress(stage)
+	}
 }
 
 func validateVectors(vectors [][]float32) error {
