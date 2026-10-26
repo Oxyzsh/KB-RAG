@@ -79,6 +79,45 @@ go build -o KB-RAG.exe ./cmd/KB-RAG
 
 `--top-k` 等 flag 必须写在问题之前（Go `flag` 在第一个位置参数处停止解析）。
 
+## Web 界面
+
+Web 界面由 Go `serve` 命令托管，前端源码在 `fronted/`。
+
+```powershell
+# 构建前端
+cd fronted
+npm install
+npm run build
+cd ..
+
+# 构建 Go
+go build -o KB-RAG.exe ./cmd/KB-RAG
+
+# 设置两个密钥（PowerShell 示例）
+$env:KB_RAG_WEB_TOKEN = "至少16个字符的共享令牌"
+$env:KB_RAG_LLM_API_KEY = "你的生成服务Key"
+
+# 启动 Web 服务（默认 http://127.0.0.1:8080）
+./KB-RAG.exe serve --config config.yaml
+```
+
+浏览器打开 `http://127.0.0.1:8080`，输入共享令牌登录。
+
+局域网访问：把 `config.yaml` 的 `web.addr` 改为 `0.0.0.0:8080`（或指定网卡 IP），并从其他设备访问 `http://<主机IP>:8080`。令牌使用明文 HTTP 传输，请只在可信局域网使用；需要更强安全时放在 HTTPS 反向代理后。
+
+前端开发模式：
+
+```bash
+cd fronted
+npm run dev
+```
+
+Vite 会把 `/api` 代理到 `127.0.0.1:8080`，需要同时运行 `KB-RAG serve`。
+
+删除文档只删除知识库索引，任何源文件都会保留；上传目录不会自动清理。
+
+详见 [Web 设计文档](docs/superpowers/specs/2026-10-26-KB-RAG-web-design.md)。
+
 ## 已知限制
 
 - 扫描件 PDF 不做 OCR。
