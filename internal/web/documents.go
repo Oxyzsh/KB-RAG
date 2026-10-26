@@ -3,9 +3,12 @@ package web
 import (
 	"errors"
 	"net/http"
+	"os"
+	"strconv"
 
 	"kb-rag/internal/ingest"
 	"kb-rag/internal/ingest/loader"
+	"kb-rag/internal/store"
 )
 
 func (s *Server) handleUploadDocument(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +76,70 @@ func (s *Server) handleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, uploadResponse{
+		Document: s.documentDTO(summary),
+		Outcome:  res.Outcome,
+	})
+}
+
+func parseDocumentID(r *http.Request) (int64, error) {
+	return strconv.ParseInt(r.PathValue("id"), 10, 64)
+}
+
+func (s *Server) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	id, err := parseDocumentID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "文档 ID 非法")
+		return
+	}
+	if err := s.store.DeleteDocument(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrDocumentNotFound) {
+			writeError(w, http.StatusNotFound, "文档不存在")
+			return
+		}
+		s.logger.Error("删除文档失败", "error", err, "id", id)
+		writeError(w, http.StatusInternalServerError, "删除文档失败")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleReingestDocument(w http.ResponseWriter, r *http.Request) {
+	id, err := parseDocumentID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "文档 ID 非法")
+		return
+	}
+	info, ok, err := s.store.GetDocumentByID(r.Context(), id)
+	if err != nil {
+		s.logger.Error("读取文档失败", "error", err, "id", id)
+		writeError(w, http.StatusInternalServerError, "读取文档失败")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "文档不存在")
+		return
+	}
+	if _, err := os.Stat(info.Path); err != nil {
+		writeError(w, http.StatusConflict, "源文件不存在，无法重试")
+		return
+	}
+
+	s.ingestMu.Lock()
+	res := ingest.IngestFile(r.Context(), info.Path, s.store, s.embedder, s.ingestOptions)
+	s.ingestMu.Unlock()
+	if res.Fatal {
+		s.logger.Error("重试入库失败", "error", res.Err, "id", id)
+		writeError(w, http.StatusInternalServerError, "重试入库失败")
+		return
+	}
+
+	summary, ok, err := s.summaryByID(r.Context(), id)
+	if err != nil || !ok {
+		s.logger.Error("读取重试结果失败", "error", err, "id", id)
+		writeError(w, http.StatusInternalServerError, "读取重试结果失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, uploadResponse{
 		Document: s.documentDTO(summary),
 		Outcome:  res.Outcome,
 	})

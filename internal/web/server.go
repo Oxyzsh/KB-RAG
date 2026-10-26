@@ -78,6 +78,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /stats", s.handleStats)
 	api.HandleFunc("GET /documents", s.handleListDocuments)
 	api.HandleFunc("POST /documents", s.handleUploadDocument)
+	api.HandleFunc("DELETE /documents/{id}", s.handleDeleteDocument)
+	api.HandleFunc("POST /documents/{id}/reingest", s.handleReingestDocument)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", s.withAuth(http.StripPrefix("/api", api)))

@@ -3,10 +3,12 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,5 +137,87 @@ func TestSafeUploadName(t *testing.T) {
 		if got := safeUploadName(in); got != want {
 			t.Errorf("safeUploadName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestDeleteKeepsSourceFile(t *testing.T) {
+	srv, _, _, token := newTestServer(t)
+	rec := uploadDoc(t, srv, token, "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d", rec.Code)
+	}
+	var up uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
+		t.Fatal(err)
+	}
+	filesBefore := uploadedFiles(t, srv.uploadDir)
+	if len(filesBefore) != 1 {
+		t.Fatalf("files before = %v", filesBefore)
+	}
+
+	rec = call(t, srv.Handler(), "DELETE", fmt.Sprintf("/api/documents/%d", up.Document.ID), nil, token, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = call(t, srv.Handler(), "GET", "/api/documents", nil, token, "")
+	var docs listDocumentsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &docs); err != nil {
+		t.Fatal(err)
+	}
+	if len(docs.Documents) != 0 {
+		t.Fatalf("删除后文档 = %+v", docs.Documents)
+	}
+	if _, err := os.Stat(filesBefore[0]); err != nil {
+		t.Fatalf("源文件被删除: %v", err)
+	}
+}
+
+func TestDeleteNotFound(t *testing.T) {
+	srv, _, _, token := newTestServer(t)
+	rec := call(t, srv.Handler(), "DELETE", "/api/documents/999", nil, token, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestReingestSkipped(t *testing.T) {
+	srv, _, _, token := newTestServer(t)
+	rec := uploadDoc(t, srv, token, "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
+	var up uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = call(t, srv.Handler(), "POST", fmt.Sprintf("/api/documents/%d/reingest", up.Document.ID), nil, token, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reingest status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var again uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &again); err != nil {
+		t.Fatal(err)
+	}
+	if again.Outcome != "skipped" || again.Document.Chunks == 0 {
+		t.Fatalf("reingest = %+v", again)
+	}
+}
+
+func TestReingestMissingSource(t *testing.T) {
+	srv, _, _, token := newTestServer(t)
+	rec := uploadDoc(t, srv, token, "年假.md", []byte("# 休假\n\n员工累计工作满1年可享5天年假。\n"))
+	var up uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
+		t.Fatal(err)
+	}
+	files := uploadedFiles(t, srv.uploadDir)
+	if len(files) != 1 {
+		t.Fatalf("files = %v", files)
+	}
+	if err := os.Remove(files[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = call(t, srv.Handler(), "POST", fmt.Sprintf("/api/documents/%d/reingest", up.Document.ID), nil, token, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
