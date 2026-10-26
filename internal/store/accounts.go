@@ -34,7 +34,11 @@ type Principal struct {
 	TenantID   int64
 	TenantSlug string
 	TenantName string
-	TokenHash  string
+	// HomeTenant* 是用户所属租户；Tenant* 是本次请求的生效租户，可通过切换覆盖。
+	HomeTenantID   int64
+	HomeTenantSlug string
+	HomeTenantName string
+	TokenHash      string
 }
 
 var (
@@ -432,6 +436,9 @@ func (s *Store) PrincipalByTokenHash(ctx context.Context, tokenHash string, now 
 	if err != nil {
 		return Principal{}, false, err
 	}
+	p.HomeTenantID = p.TenantID
+	p.HomeTenantSlug = p.TenantSlug
+	p.HomeTenantName = p.TenantName
 	return p, true, nil
 }
 

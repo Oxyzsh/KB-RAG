@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { getStats, listDocuments } from '../api/client'
 import type { DocumentItem, Stats } from '../api/types'
 import DocumentTable from '../components/DocumentTable.vue'
 import UploadPanel from '../components/UploadPanel.vue'
-import { canEditDocuments } from '../session'
+import { canEditDocuments, session } from '../session'
 
 const stats = ref<Stats | null>(null)
 const documents = ref<DocumentItem[]>([])
@@ -31,6 +31,12 @@ function formatSize(bytes: number): string {
 }
 
 onMounted(load)
+watch(
+  () => session.user?.tenant_slug,
+  () => {
+    void load()
+  },
+)
 </script>
 
 <template>

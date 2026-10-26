@@ -192,6 +192,23 @@ func (e *testEnv) callAs(t *testing.T, who, method, path string, body []byte, co
 	return call(t, e.srv.Handler(), method, path, body, e.tokens[who], contentType)
 }
 
+func (e *testEnv) callAsTenant(t *testing.T, who, tenant, method, path string, body []byte, contentType string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	if token := e.tokens[who]; token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if tenant != "" {
+		req.Header.Set("X-Tenant", tenant)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	rec := httptest.NewRecorder()
+	e.srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
 func login(t *testing.T, e *testEnv, tenant, username, password string) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(loginRequest{Tenant: tenant, Username: username, Password: password})

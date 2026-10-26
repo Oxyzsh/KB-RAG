@@ -93,6 +93,27 @@ func (s *Server) withSession(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "未认证")
 			return
 		}
+		if slug := strings.TrimSpace(r.Header.Get("X-Tenant")); slug != "" {
+			if !p.IsSuper {
+				writeError(w, http.StatusForbidden, "无权切换租户")
+				return
+			}
+			if slug != p.TenantSlug {
+				tenant, ok, err := s.store.TenantBySlug(r.Context(), slug)
+				if err != nil {
+					s.logger.Error("切换租户失败", "error", err, "slug", slug)
+					writeError(w, http.StatusInternalServerError, "切换租户失败")
+					return
+				}
+				if !ok {
+					writeError(w, http.StatusBadRequest, "租户不存在")
+					return
+				}
+				p.TenantID = tenant.ID
+				p.TenantSlug = tenant.Slug
+				p.TenantName = tenant.Name
+			}
+		}
 		next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 	})
 }
@@ -174,14 +195,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := store.Principal{
-		UserID:     user.ID,
-		Username:   user.Username,
-		Role:       user.Role,
-		IsSuper:    user.IsSuper,
-		TenantID:   tenant.ID,
-		TenantSlug: tenant.Slug,
-		TenantName: tenant.Name,
-		TokenHash:  auth.HashToken(token),
+		UserID:         user.ID,
+		Username:       user.Username,
+		Role:           user.Role,
+		IsSuper:        user.IsSuper,
+		TenantID:       tenant.ID,
+		TenantSlug:     tenant.Slug,
+		TenantName:     tenant.Name,
+		HomeTenantID:   tenant.ID,
+		HomeTenantSlug: tenant.Slug,
+		HomeTenantName: tenant.Name,
+		TokenHash:      auth.HashToken(token),
 	}
 	s.audit(r, p, p.TenantID, "login.success", username, nil)
 	writeJSON(w, http.StatusOK, loginResponse{
@@ -209,29 +233,37 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 
 func userDTOFromPrincipal(p store.Principal, createdAt, updatedAt string) userDTO {
 	return userDTO{
-		ID:         p.UserID,
-		Username:   p.Username,
-		Role:       p.Role,
-		IsSuper:    p.IsSuper,
-		TenantID:   p.TenantID,
-		TenantSlug: p.TenantSlug,
-		TenantName: p.TenantName,
-		CreatedAt:  createdAt,
-		UpdatedAt:  updatedAt,
+		ID:             p.UserID,
+		Username:       p.Username,
+		Role:           p.Role,
+		IsSuper:        p.IsSuper,
+		TenantID:       p.TenantID,
+		TenantSlug:     p.TenantSlug,
+		TenantName:     p.TenantName,
+		HomeTenantID:   p.HomeTenantID,
+		HomeTenantSlug: p.HomeTenantSlug,
+		HomeTenantName: p.HomeTenantName,
+		CanSwitch:      p.IsSuper,
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
 	}
 }
 
 func userDTOFromStore(u store.User, tenant store.Tenant) userDTO {
 	return userDTO{
-		ID:         u.ID,
-		Username:   u.Username,
-		Role:       u.Role,
-		IsSuper:    u.IsSuper,
-		TenantID:   u.TenantID,
-		TenantSlug: tenant.Slug,
-		TenantName: tenant.Name,
-		CreatedAt:  u.CreatedAt,
-		UpdatedAt:  u.UpdatedAt,
+		ID:             u.ID,
+		Username:       u.Username,
+		Role:           u.Role,
+		IsSuper:        u.IsSuper,
+		TenantID:       u.TenantID,
+		TenantSlug:     tenant.Slug,
+		TenantName:     tenant.Name,
+		HomeTenantID:   u.TenantID,
+		HomeTenantSlug: tenant.Slug,
+		HomeTenantName: tenant.Name,
+		CanSwitch:      u.IsSuper,
+		CreatedAt:      u.CreatedAt,
+		UpdatedAt:      u.UpdatedAt,
 	}
 }
 

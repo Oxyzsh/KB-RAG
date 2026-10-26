@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { clearToken, logout } from '../api/client'
-import { clearSession, loadSession, session } from '../session'
+import { clearSession, loadSession, refreshTenants, session, switchTenant, tenantState } from '../session'
 
 const route = useRoute()
 const router = useRouter()
 const active = computed(() => route.path)
+
+const switching = ref(false)
+const activeTenantSlug = computed(() => session.user?.tenant_slug ?? '')
+const canSwitchTenant = computed(() => session.user?.can_switch === true)
 
 const roleLabel = computed(() => {
   switch (session.user?.role) {
@@ -29,7 +34,29 @@ onMounted(async () => {
       // 401 已由 client 跳转登录页。
     }
   }
+  if (session.user?.can_switch) {
+    try {
+      await refreshTenants()
+    } catch {
+      // 租户列表加载失败不影响其他功能。
+    }
+  }
 })
+
+async function onTenantChange(slug: string) {
+  if (!slug || switching.value) {
+    return
+  }
+  switching.value = true
+  try {
+    const user = await switchTenant(slug)
+    ElMessage.success(`已切换到「${user?.tenant_name ?? slug}」`)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '切换租户失败')
+  } finally {
+    switching.value = false
+  }
+}
 
 async function signOut() {
   try {
@@ -56,6 +83,17 @@ async function signOut() {
       <div v-if="session.user" class="user-card">
         <div class="user-name">{{ session.user.username }}</div>
         <div class="user-meta">{{ session.user.tenant_name }} · {{ roleLabel }}</div>
+      </div>
+      <div v-if="canSwitchTenant" class="tenant-switcher">
+        <div class="tenant-label">切换租户</div>
+        <el-select
+          :model-value="activeTenantSlug"
+          size="small"
+          :loading="switching"
+          @change="onTenantChange"
+        >
+          <el-option v-for="t in tenantState.list" :key="t.id" :label="t.name" :value="t.slug" />
+        </el-select>
       </div>
       <el-menu :default-active="active" router class="nav">
         <el-menu-item index="/chat">知识问答</el-menu-item>
@@ -135,6 +173,20 @@ async function signOut() {
   margin-top: 3px;
   color: #6b7280;
   font-size: 12px;
+}
+
+.tenant-switcher {
+  margin: 0 6px 14px;
+}
+
+.tenant-label {
+  margin-bottom: 6px;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.tenant-switcher :deep(.el-select) {
+  width: 100%;
 }
 
 .nav {

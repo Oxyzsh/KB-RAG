@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -14,7 +14,7 @@ import {
   updateUser,
 } from '../api/client'
 import type { AuditItem, Role, Tenant, User } from '../api/types'
-import { clearSession, session } from '../session'
+import { clearSession, refreshTenants, session } from '../session'
 
 const router = useRouter()
 const activeTab = ref('users')
@@ -222,6 +222,7 @@ async function submitTenant() {
     ElMessage.success('租户创建成功')
     tenantDialog.value = false
     await loadTenants()
+    void refreshTenants().catch(() => undefined)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
   }
@@ -277,6 +278,15 @@ onMounted(() => {
   void loadAudit()
   void loadTenants()
 })
+
+watch(
+  () => session.user?.tenant_slug,
+  () => {
+    void loadUsers()
+    void loadAudit()
+    void loadTenants()
+  },
+)
 </script>
 
 <template>

@@ -65,6 +65,10 @@ export interface User {
   tenant_id: number
   tenant_slug: string
   tenant_name: string
+  home_tenant_id: number
+  home_tenant_slug: string
+  home_tenant_name: string
+  can_switch: boolean
   created_at: string
   updated_at: string
 }

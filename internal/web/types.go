@@ -66,15 +66,19 @@ type tenantDTO struct {
 }
 
 type userDTO struct {
-	ID         int64  `json:"id"`
-	Username   string `json:"username"`
-	Role       string `json:"role"`
-	IsSuper    bool   `json:"is_super"`
-	TenantID   int64  `json:"tenant_id"`
-	TenantSlug string `json:"tenant_slug"`
-	TenantName string `json:"tenant_name"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
+	ID             int64  `json:"id"`
+	Username       string `json:"username"`
+	Role           string `json:"role"`
+	IsSuper        bool   `json:"is_super"`
+	TenantID       int64  `json:"tenant_id"`
+	TenantSlug     string `json:"tenant_slug"`
+	TenantName     string `json:"tenant_name"`
+	HomeTenantID   int64  `json:"home_tenant_id"`
+	HomeTenantSlug string `json:"home_tenant_slug"`
+	HomeTenantName string `json:"home_tenant_name"`
+	CanSwitch      bool   `json:"can_switch"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 type loginRequest struct {

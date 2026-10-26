@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import CitationList from '../components/CitationList.vue'
 import { ask } from '../api/client'
 import type { Citation } from '../api/types'
 import { renderMarkdown } from '../markdown'
+import { session } from '../session'
 
 interface ChatItem {
   id: string
@@ -66,6 +67,13 @@ async function send() {
 function clearMessages() {
   messages.value = []
 }
+
+watch(
+  () => session.user?.tenant_slug,
+  () => {
+    messages.value = []
+  },
+)
 
 async function copyAnswer(text: string) {
   try {

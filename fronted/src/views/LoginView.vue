@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { login, setToken } from '../api/client'
+import { clearTenantOverride, login, setToken } from '../api/client'
 import { setSessionUser } from '../session'
 
 const router = useRouter()
@@ -20,6 +20,7 @@ async function submit() {
   }
   loading.value = true
   error.value = ''
+  clearTenantOverride()
   try {
     const res = await login(tenantValue, usernameValue, password.value)
     setToken(res.token)

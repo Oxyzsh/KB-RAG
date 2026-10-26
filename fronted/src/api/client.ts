@@ -14,6 +14,7 @@ import type {
 } from './types'
 
 const TOKEN_KEY = 'kbrag_token'
+const TENANT_KEY = 'kbrag_tenant'
 
 export class ApiError extends Error {
   status: number
@@ -37,11 +38,31 @@ export function clearToken(): void {
   sessionStorage.removeItem(TOKEN_KEY)
 }
 
+export function getTenantOverride(): string {
+  return sessionStorage.getItem(TENANT_KEY) ?? ''
+}
+
+export function setTenantOverride(slug: string): void {
+  if (slug) {
+    sessionStorage.setItem(TENANT_KEY, slug)
+  } else {
+    sessionStorage.removeItem(TENANT_KEY)
+  }
+}
+
+export function clearTenantOverride(): void {
+  sessionStorage.removeItem(TENANT_KEY)
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   const token = getToken()
   if (token) {
     headers.set('Authorization', `Bearer ${token}`)
+    const tenant = getTenantOverride()
+    if (tenant) {
+      headers.set('X-Tenant', tenant)
+    }
   }
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -61,6 +82,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) {
       clearToken()
+      clearTenantOverride()
       if (!window.location.hash.startsWith('#/login')) {
         window.location.hash = '#/login'
       }
