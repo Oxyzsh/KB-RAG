@@ -96,3 +96,72 @@ func TestValidateOK(t *testing.T) {
 		t.Fatal("测试前置数据异常")
 	}
 }
+
+func TestLoadWebDefaultsAndToken(t *testing.T) {
+	t.Setenv("KB_RAG_WEB_TOKEN", "0123456789abcdef")
+	path := writeConfig(t, "llm:\n  base_url: http://localhost:9999\n  model: test-llm\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Web.Addr != "127.0.0.1:8080" {
+		t.Errorf("web.addr = %q", cfg.Web.Addr)
+	}
+	if cfg.Web.UploadDir != "./data/uploads" {
+		t.Errorf("web.upload_dir = %q", cfg.Web.UploadDir)
+	}
+	if cfg.Web.MaxUploadMB != 20 {
+		t.Errorf("web.max_upload_mb = %d", cfg.Web.MaxUploadMB)
+	}
+	if cfg.Web.FrontendDir != "./fronted/dist" {
+		t.Errorf("web.frontend_dir = %q", cfg.Web.FrontendDir)
+	}
+	if cfg.WebToken != "0123456789abcdef" {
+		t.Errorf("WebToken = %q", cfg.WebToken)
+	}
+}
+
+func TestValidateServe(t *testing.T) {
+	dir := t.TempDir()
+	frontend := filepath.Join(dir, "frontend")
+	if err := os.MkdirAll(frontend, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontend, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := func() *Config {
+		c := validConfig(dir)
+		c.Web = WebConfig{
+			Addr:        "127.0.0.1:8080",
+			UploadDir:   filepath.Join(dir, "uploads"),
+			MaxUploadMB: 20,
+			FrontendDir: frontend,
+		}
+		c.WebToken = "0123456789abcdef"
+		return c
+	}
+	if err := base().Validate("serve"); err != nil {
+		t.Fatalf("合法 serve 配置被拒绝: %v", err)
+	}
+	cases := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"bad addr", func(c *Config) { c.Web.Addr = "localhost" }},
+		{"bad port", func(c *Config) { c.Web.Addr = "127.0.0.1:99999" }},
+		{"zero upload limit", func(c *Config) { c.Web.MaxUploadMB = 0 }},
+		{"missing frontend index", func(c *Config) { c.Web.FrontendDir = filepath.Join(dir, "missing") }},
+		{"short token", func(c *Config) { c.WebToken = "short" }},
+		{"missing api key", func(c *Config) { c.APIKey = "" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base()
+			tc.mutate(cfg)
+			if err := cfg.Validate("serve"); err == nil {
+				t.Fatal("期望校验失败")
+			}
+		})
+	}
+}
