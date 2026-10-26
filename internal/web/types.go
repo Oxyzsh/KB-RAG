@@ -11,6 +11,7 @@ type statsDTO struct {
 	DocumentsFailed int          `json:"documents_failed"`
 	Chunks          int          `json:"chunks"`
 	SizeBytes       int64        `json:"size_bytes"`
+	TenantSizeBytes int64        `json:"tenant_size_bytes"`
 	Embedding       embeddingDTO `json:"embedding"`
 }
 
@@ -56,4 +57,98 @@ type uploadResponse struct {
 
 type errorResponse struct {
 	Error string `json:"error"`
+}
+
+type tenantDTO struct {
+	ID   int64  `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+type userDTO struct {
+	ID         int64  `json:"id"`
+	Username   string `json:"username"`
+	Role       string `json:"role"`
+	IsSuper    bool   `json:"is_super"`
+	TenantID   int64  `json:"tenant_id"`
+	TenantSlug string `json:"tenant_slug"`
+	TenantName string `json:"tenant_name"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+type loginRequest struct {
+	Tenant   string `json:"tenant"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type loginResponse struct {
+	Token     string  `json:"token"`
+	ExpiresAt string  `json:"expires_at"`
+	User      userDTO `json:"user"`
+}
+
+type sessionResponse struct {
+	User userDTO `json:"user"`
+}
+
+type userListResponse struct {
+	Users []userDTO `json:"users"`
+}
+
+type userResponse struct {
+	User userDTO `json:"user"`
+}
+
+type createUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
+}
+
+type updateUserRequest struct {
+	Role     *string `json:"role"`
+	Password *string `json:"password"`
+}
+
+type tenantsResponse struct {
+	Tenants []tenantDTO `json:"tenants"`
+}
+
+type createTenantRequest struct {
+	Slug          string `json:"slug"`
+	Name          string `json:"name"`
+	AdminUsername string `json:"admin_username"`
+	AdminPassword string `json:"admin_password"`
+}
+
+type createTenantResponse struct {
+	Tenant tenantDTO `json:"tenant"`
+	User   userDTO   `json:"user"`
+}
+
+type resetTenantAdminRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type auditDTO struct {
+	ID         int64  `json:"id"`
+	TenantID   *int64 `json:"tenant_id"`
+	TenantSlug string `json:"tenant_slug"`
+	UserID     *int64 `json:"user_id"`
+	Username   string `json:"username"`
+	Action     string `json:"action"`
+	Target     string `json:"target"`
+	Detail     string `json:"detail"`
+	IP         string `json:"ip"`
+	CreatedAt  string `json:"created_at"`
+}
+
+type auditListResponse struct {
+	Items    []auditDTO `json:"items"`
+	Total    int        `json:"total"`
+	Page     int        `json:"page"`
+	PageSize int        `json:"page_size"`
 }

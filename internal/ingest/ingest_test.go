@@ -31,7 +31,7 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func setup(t *testing.T) (*store.Store, string, *fakeEmbedder) {
+func setup(t *testing.T) (*store.Store, string, *fakeEmbedder, int64) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "kb.db"))
 	if err != nil {
@@ -39,7 +39,11 @@ func setup(t *testing.T) (*store.Store, string, *fakeEmbedder) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	root := t.TempDir()
-	return st, root, &fakeEmbedder{}
+	tenant, ok, err := st.TenantBySlug(context.Background(), "default")
+	if err != nil || !ok {
+		t.Fatalf("读取默认租户失败: ok=%v err=%v", ok, err)
+	}
+	return st, root, &fakeEmbedder{}, tenant.ID
 }
 
 func writeDoc(t *testing.T, path, body string) {
@@ -53,12 +57,12 @@ func writeDoc(t *testing.T, path, body string) {
 }
 
 func TestRunIncremental(t *testing.T) {
-	st, root, emb := setup(t)
+	st, root, emb, tenantID := setup(t)
 	a := filepath.Join(root, "docs", "年假.md")
 	b := filepath.Join(root, "docs", "食堂.txt")
 	writeDoc(t, a, "# 休假\n\n员工满1年可享5天年假。\n")
 	writeDoc(t, b, "食堂开放时间为中午十二点。\n")
-	opt := Options{Model: "bge-m3", ChunkSize: 500, Overlap: 80, Logger: discardLogger()}
+	opt := Options{TenantID: tenantID, Model: "bge-m3", ChunkSize: 500, Overlap: 80, Logger: discardLogger()}
 	ctx := context.Background()
 
 	summary, err := Run(ctx, root, st, emb, opt)
@@ -68,7 +72,7 @@ func TestRunIncremental(t *testing.T) {
 	if summary.Succeeded != 2 || summary.Skipped != 0 || summary.Failed != 0 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	stats, err := st.Stats(ctx)
+	stats, err := st.Stats(ctx, tenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,9 +99,9 @@ func TestRunIncremental(t *testing.T) {
 }
 
 func TestRunEmbedFailureRetries(t *testing.T) {
-	st, root, emb := setup(t)
+	st, root, emb, tenantID := setup(t)
 	writeDoc(t, filepath.Join(root, "a.md"), "# 标题\n\n一段足够长的正文内容。\n")
-	opt := Options{Model: "bge-m3", ChunkSize: 500, Overlap: 80, Logger: discardLogger()}
+	opt := Options{TenantID: tenantID, Model: "bge-m3", ChunkSize: 500, Overlap: 80, Logger: discardLogger()}
 	ctx := context.Background()
 
 	emb.fail = true
@@ -108,7 +112,7 @@ func TestRunEmbedFailureRetries(t *testing.T) {
 	if summary.Failed != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	info, ok, err := st.GetDocument(filepath.Join(root, "a.md"))
+	info, ok, err := st.GetDocument(ctx, tenantID, filepath.Join(root, "a.md"))
 	if err != nil || !ok || info.Status != "failed" {
 		t.Fatalf("info = %+v, ok=%v, err=%v", info, ok, err)
 	}
@@ -124,10 +128,10 @@ func TestRunEmbedFailureRetries(t *testing.T) {
 }
 
 func TestRunBadDocumentDoesNotBlockOthers(t *testing.T) {
-	st, root, emb := setup(t)
+	st, root, emb, tenantID := setup(t)
 	writeDoc(t, filepath.Join(root, "good.md"), "# 标题\n\n一段足够长的正文内容。\n")
 	writeDoc(t, filepath.Join(root, "bad.docx"), "not a docx")
-	opt := Options{Model: "bge-m3", ChunkSize: 500, Overlap: 80, Logger: discardLogger()}
+	opt := Options{TenantID: tenantID, Model: "bge-m3", ChunkSize: 500, Overlap: 80, Logger: discardLogger()}
 
 	summary, err := Run(context.Background(), root, st, emb, opt)
 	if err != nil {
@@ -139,13 +143,13 @@ func TestRunBadDocumentDoesNotBlockOthers(t *testing.T) {
 }
 
 func TestIngestFile(t *testing.T) {
-	st, root, emb := setup(t)
+	st, root, emb, tenantID := setup(t)
 	if err := st.InitMeta("bge-m3", 500); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "a.md")
 	writeDoc(t, path, "# 标题\n\n一段足够长的正文内容。\n")
-	opt := Options{Model: "bge-m3", ChunkSize: 500, Overlap: 80, Logger: discardLogger()}
+	opt := Options{TenantID: tenantID, Model: "bge-m3", ChunkSize: 500, Overlap: 80, Logger: discardLogger()}
 	ctx := context.Background()
 
 	res := IngestFile(ctx, path, st, emb, opt)
@@ -163,7 +167,7 @@ func TestIngestFile(t *testing.T) {
 	if res.Outcome != OutcomeFailed || res.Err == nil {
 		t.Fatalf("失败 IngestFile = %+v", res)
 	}
-	info, ok, err := st.GetDocument(path)
+	info, ok, err := st.GetDocument(ctx, tenantID, path)
 	if err != nil || !ok || info.Status != "failed" {
 		t.Fatalf("失败状态 = %+v, ok=%v, err=%v", info, ok, err)
 	}

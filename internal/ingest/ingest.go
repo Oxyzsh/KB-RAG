@@ -23,13 +23,14 @@ type Embedder interface {
 
 type Store interface {
 	InitMeta(model string, chunkSize int) error
-	GetDocument(path string) (store.DocumentInfo, bool, error)
+	GetDocument(ctx context.Context, tenantID int64, path string) (store.DocumentInfo, bool, error)
 	SetDim(dim int) error
-	ReplaceDocument(ctx context.Context, path, title, hash string, chunks []store.ChunkInput) error
-	MarkFailed(ctx context.Context, path, title, hash, msg string) error
+	ReplaceDocument(ctx context.Context, tenantID int64, path, title, hash string, chunks []store.ChunkInput) error
+	MarkFailed(ctx context.Context, tenantID int64, path, title, hash, msg string) error
 }
 
 type Options struct {
+	TenantID  int64
 	Model     string
 	ChunkSize int
 	Overlap   int
@@ -152,7 +153,7 @@ func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path,
 	sum := sha256.Sum256(raw)
 	hash := hex.EncodeToString(sum[:])
 
-	existing, exists, err := st.GetDocument(path)
+	existing, exists, err := st.GetDocument(ctx, opt.TenantID, path)
 	if err != nil {
 		return FileResult{Outcome: OutcomeFailed, Err: err}
 	}
@@ -208,7 +209,7 @@ func processFile(ctx context.Context, st Store, emb Embedder, opt Options, path,
 	for i, chunk := range chunks {
 		inputs[i] = store.ChunkInput{Seq: chunk.Seq, Heading: chunk.Heading, Text: chunk.Text, Vector: vectors[i]}
 	}
-	if err := st.ReplaceDocument(ctx, path, title, hash, inputs); err != nil {
+	if err := st.ReplaceDocument(ctx, opt.TenantID, path, title, hash, inputs); err != nil {
 		if ctx.Err() != nil {
 			return FileResult{Outcome: OutcomeFailed, Err: ctx.Err(), Fatal: true}
 		}
@@ -232,7 +233,7 @@ func validateVectors(vectors [][]float32) error {
 }
 
 func markFailed(ctx context.Context, st Store, opt Options, path, rel, title, hash, msg string) {
-	if err := st.MarkFailed(ctx, path, title, hash, msg); err != nil {
+	if err := st.MarkFailed(ctx, opt.TenantID, path, title, hash, msg); err != nil {
 		opt.Logger.Warn("记录失败状态失败", "path", rel, "error", err)
 	}
 }

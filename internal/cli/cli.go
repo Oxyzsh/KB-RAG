@@ -51,9 +51,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "用法：")
-	fmt.Fprintln(w, "  KB-RAG ingest [--config 路径] <目录>")
-	fmt.Fprintln(w, "  KB-RAG ask [--config 路径] [--top-k N] \"问题\"")
-	fmt.Fprintln(w, "  KB-RAG stats [--config 路径]")
+	fmt.Fprintln(w, "  KB-RAG ingest [--config 路径] [--tenant 标识] <目录>")
+	fmt.Fprintln(w, "  KB-RAG ask [--config 路径] [--tenant 标识] [--top-k N] \"问题\"")
+	fmt.Fprintln(w, "  KB-RAG stats [--config 路径] [--tenant 标识]")
 	fmt.Fprintln(w, "  KB-RAG serve [--config 路径]")
 }
 
@@ -79,8 +79,21 @@ func interrupted(ctx context.Context) bool {
 	return ctx.Err() != nil
 }
 
+func resolveTenant(ctx context.Context, st *store.Store, slug string) (store.Tenant, error) {
+	slug = strings.TrimSpace(slug)
+	t, ok, err := st.TenantBySlug(ctx, slug)
+	if err != nil {
+		return store.Tenant{}, err
+	}
+	if !ok {
+		return store.Tenant{}, fmt.Errorf("租户 %q 不存在，请先在 Web 中以超级管理员创建", slug)
+	}
+	return t, nil
+}
+
 func runIngest(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs, cfgPath := newFlagSet("ingest", stderr, "用法: KB-RAG ingest [--config 路径] <目录>")
+	fs, cfgPath := newFlagSet("ingest", stderr, "用法: KB-RAG ingest [--config 路径] [--tenant 标识] <目录>")
+	tenantSlug := fs.String("tenant", "default", "租户标识")
 	if err := fs.Parse(args); err != nil {
 		return flagExit(err)
 	}
@@ -112,7 +125,16 @@ func runIngest(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	defer st.Close()
 
 	emb := embedder.New(cfg.Embedding.BaseURL, cfg.Embedding.Model, cfg.Embedding.BatchSize)
+	tenant, err := resolveTenant(ctx, st, *tenantSlug)
+	if err != nil {
+		if interrupted(ctx) {
+			return exitInterrupted
+		}
+		fmt.Fprintf(stderr, "租户错误: %v\n", err)
+		return exitConfig
+	}
 	summary, err := ingest.Run(ctx, fs.Arg(0), st, emb, ingest.Options{
+		TenantID:  tenant.ID,
 		Model:     cfg.Embedding.Model,
 		ChunkSize: cfg.Chunk.Size,
 		Overlap:   cfg.Chunk.Overlap,
@@ -137,8 +159,9 @@ func runIngest(ctx context.Context, args []string, stdout, stderr io.Writer) int
 }
 
 func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs, cfgPath := newFlagSet("ask", stderr, `用法: KB-RAG ask [--config 路径] [--top-k N] "问题"`)
+	fs, cfgPath := newFlagSet("ask", stderr, `用法: KB-RAG ask [--config 路径] [--tenant 标识] [--top-k N] "问题"`)
 	topK := fs.Int("top-k", 8, "检索片段数量")
+	tenantSlug := fs.String("tenant", "default", "租户标识")
 	if err := fs.Parse(args); err != nil {
 		return flagExit(err)
 	}
@@ -178,11 +201,20 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger.Error("读取当前目录失败", "error", err)
 		return exitRuntime
 	}
+	tenant, err := resolveTenant(ctx, st, *tenantSlug)
+	if err != nil {
+		if interrupted(ctx) {
+			return exitInterrupted
+		}
+		fmt.Fprintf(stderr, "租户错误: %v\n", err)
+		return exitConfig
+	}
 	service := &query.Service{
 		Embedder:   embedder.New(cfg.Embedding.BaseURL, cfg.Embedding.Model, cfg.Embedding.BatchSize),
 		Store:      st,
 		LLM:        llm.New(cfg.LLM.BaseURL, cfg.LLM.Model, cfg.APIKey),
 		EmbedModel: cfg.Embedding.Model,
+		TenantID:   tenant.ID,
 		TopK:       *topK,
 		BaseDir:    baseDir,
 		Logger:     logger,
@@ -205,7 +237,8 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func runStats(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs, cfgPath := newFlagSet("stats", stderr, "用法: KB-RAG stats [--config 路径]")
+	fs, cfgPath := newFlagSet("stats", stderr, "用法: KB-RAG stats [--config 路径] [--tenant 标识]")
+	tenantSlug := fs.String("tenant", "default", "租户标识")
 	if err := fs.Parse(args); err != nil {
 		return flagExit(err)
 	}
@@ -236,7 +269,15 @@ func runStats(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 	defer st.Close()
 
-	stats, err := st.Stats(ctx)
+	tenant, err := resolveTenant(ctx, st, *tenantSlug)
+	if err != nil {
+		if interrupted(ctx) {
+			return exitInterrupted
+		}
+		fmt.Fprintf(stderr, "租户错误: %v\n", err)
+		return exitConfig
+	}
+	stats, err := st.Stats(ctx, tenant.ID)
 	if err != nil {
 		logger.Error("读取统计失败", "error", err)
 		if interrupted(ctx) {
@@ -244,6 +285,7 @@ func runStats(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		}
 		return exitRuntime
 	}
+	fmt.Fprintf(stdout, "租户：%s（%s）\n", tenant.Name, tenant.Slug)
 	fmt.Fprintf(stdout, "文档：%d（失败 %d）\n", stats.Documents, stats.DocumentsFailed)
 	fmt.Fprintf(stdout, "片段：%d\n", stats.Chunks)
 	if stats.Meta.Model == "" {
@@ -254,7 +296,8 @@ func runStats(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if stats.Meta.ChunkSize > 0 {
 		fmt.Fprintf(stdout, "切分：%d 字符\n", stats.Meta.ChunkSize)
 	}
-	fmt.Fprintf(stdout, "库大小：%.1f MB\n", float64(stats.SizeBytes)/(1024*1024))
+	fmt.Fprintf(stdout, "本租户数据量：%.1f KB\n", float64(stats.TenantSizeBytes)/1024)
+	fmt.Fprintf(stdout, "数据库文件（全库）：%.1f MB\n", float64(stats.SizeBytes)/(1024*1024))
 	if stats.DocumentsFailed > 0 {
 		baseDir, _ := os.Getwd()
 		fmt.Fprintln(stdout, "失败文档：")

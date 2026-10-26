@@ -2,13 +2,14 @@ package web
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"kb-rag/internal/query"
 	"kb-rag/internal/store"
 )
+
+const defaultSessionTTL = 12 * time.Hour
 
 type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
@@ -30,10 +33,10 @@ type Options struct {
 	UploadDir      string
 	MaxUploadBytes int64
 	FrontendDir    string
-	Token          string
 	IngestModel    string
 	ChunkSize      int
 	Overlap        int
+	SessionTTL     time.Duration
 }
 
 type Server struct {
@@ -44,14 +47,19 @@ type Server struct {
 	uploadDir      string
 	maxUploadBytes int64
 	frontendDir    string
-	token          string
 	ingestOptions  ingest.Options
 	ingestMu       sync.Mutex
+	sessionTTL     time.Duration
+	limiter        *loginLimiter
+	hashSem        chan struct{}
 }
 
 func New(opts Options) *Server {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
+	}
+	if opts.SessionTTL <= 0 {
+		opts.SessionTTL = defaultSessionTTL
 	}
 	return &Server{
 		store:          opts.Store,
@@ -61,29 +69,41 @@ func New(opts Options) *Server {
 		uploadDir:      opts.UploadDir,
 		maxUploadBytes: opts.MaxUploadBytes,
 		frontendDir:    opts.FrontendDir,
-		token:          opts.Token,
 		ingestOptions: ingest.Options{
 			Model:     opts.IngestModel,
 			ChunkSize: opts.ChunkSize,
 			Overlap:   opts.Overlap,
 			Logger:    opts.Logger,
 		},
+		sessionTTL: opts.SessionTTL,
+		limiter:    newLoginLimiter(5, 5*time.Minute),
+		hashSem:    make(chan struct{}, 4),
 	}
 }
 
 func (s *Server) Handler() http.Handler {
 	api := http.NewServeMux()
-	api.HandleFunc("GET /health", s.handleHealth)
 	api.HandleFunc("GET /session", s.handleSession)
+	api.HandleFunc("POST /logout", s.handleLogout)
 	api.HandleFunc("GET /stats", s.handleStats)
 	api.HandleFunc("GET /documents", s.handleListDocuments)
-	api.HandleFunc("POST /documents", s.handleUploadDocument)
-	api.HandleFunc("DELETE /documents/{id}", s.handleDeleteDocument)
-	api.HandleFunc("POST /documents/{id}/reingest", s.handleReingestDocument)
+	api.HandleFunc("POST /documents", s.requireRoles(s.handleUploadDocument, "admin", "editor"))
+	api.HandleFunc("DELETE /documents/{id}", s.requireRoles(s.handleDeleteDocument, "admin", "editor"))
+	api.HandleFunc("POST /documents/{id}/reingest", s.requireRoles(s.handleReingestDocument, "admin", "editor"))
 	api.HandleFunc("POST /ask", s.handleAsk)
+	api.HandleFunc("GET /users", s.requireRoles(s.handleListUsers, "admin"))
+	api.HandleFunc("POST /users", s.requireRoles(s.handleCreateUser, "admin"))
+	api.HandleFunc("PATCH /users/{id}", s.requireRoles(s.handleUpdateUser, "admin"))
+	api.HandleFunc("DELETE /users/{id}", s.requireRoles(s.handleDeleteUser, "admin"))
+	api.HandleFunc("GET /tenants", s.requireRoles(s.handleListTenants, "admin"))
+	api.HandleFunc("POST /tenants", s.requireSuper(s.handleCreateTenant))
+	api.HandleFunc("POST /tenants/{slug}/admin/reset", s.requireSuper(s.handleResetTenantAdmin))
+	api.HandleFunc("GET /audit", s.requireRoles(s.handleListAudit, "admin"))
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/", s.withAuth(http.StripPrefix("/api", api)))
+	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("POST /api/login", s.handleLogin)
+	mux.Handle("/api/", s.withSession(http.StripPrefix("/api", api)))
 	mux.Handle("/", s.staticHandler())
 	return s.withSecurityHeaders(s.withLogging(mux))
 }
@@ -112,24 +132,34 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	}
 }
 
-func (s *Server) withAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/health" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		header := r.Header.Get("Authorization")
-		const prefix = "Bearer "
-		provided := ""
-		if strings.HasPrefix(header, prefix) {
-			provided = strings.TrimSpace(header[len(prefix):])
-		}
-		if subtle.ConstantTimeCompare([]byte(provided), []byte(s.token)) != 1 {
+func (s *Server) requireRoles(next http.HandlerFunc, roles ...string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := principalFrom(r.Context())
+		if !ok {
 			writeError(w, http.StatusUnauthorized, "未认证")
 			return
 		}
-		next.ServeHTTP(w, r)
-	})
+		if !slices.Contains(roles, p.Role) {
+			writeError(w, http.StatusForbidden, "权限不足")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) requireSuper(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := principalFrom(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "未认证")
+			return
+		}
+		if !p.IsSuper {
+			writeError(w, http.StatusForbidden, "仅超级管理员可操作")
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
@@ -137,6 +167,9 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -189,12 +222,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.store.Stats(r.Context())
+	p, _ := principalFrom(r.Context())
+	stats, err := s.store.Stats(r.Context(), p.TenantID)
 	if err != nil {
 		s.logger.Error("读取统计失败", "error", err)
 		writeError(w, http.StatusInternalServerError, "读取统计失败")
@@ -205,6 +235,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		DocumentsFailed: stats.DocumentsFailed,
 		Chunks:          stats.Chunks,
 		SizeBytes:       stats.SizeBytes,
+		TenantSizeBytes: stats.TenantSizeBytes,
 		Embedding: embeddingDTO{
 			Model:     stats.Meta.Model,
 			Dim:       stats.Meta.Dim,
@@ -214,7 +245,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.ListDocuments(r.Context())
+	p, _ := principalFrom(r.Context())
+	list, err := s.store.ListDocuments(r.Context(), p.TenantID)
 	if err != nil {
 		s.logger.Error("读取文档列表失败", "error", err)
 		writeError(w, http.StatusInternalServerError, "读取文档列表失败")
@@ -263,17 +295,12 @@ func (s *Server) isManagedPath(path string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)
 }
 
-func (s *Server) summaryByID(ctx context.Context, id int64) (store.DocumentSummary, bool, error) {
-	list, err := s.store.ListDocuments(ctx)
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return store.DocumentSummary{}, false, err
+		return r.RemoteAddr
 	}
-	for _, d := range list {
-		if d.ID == id {
-			return d, true, nil
-		}
-	}
-	return store.DocumentSummary{}, false, nil
+	return host
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -1,118 +1,15 @@
 package web
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
-	"io"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"kb-rag/internal/llm"
-	"kb-rag/internal/query"
-	"kb-rag/internal/store"
 )
 
-type fakeEmbedder struct{}
-
-func (f *fakeEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	out := make([][]float32, len(texts))
-	for i, text := range texts {
-		if strings.Contains(text, "年假") {
-			out[i] = []float32{1, 0, 0}
-		} else {
-			out[i] = []float32{0, 1, 0}
-		}
-	}
-	return out, nil
-}
-
-type fakeLLM struct {
-	fail bool
-}
-
-func (f *fakeLLM) Chat(ctx context.Context, messages []llm.Message) (string, error) {
-	if f.fail {
-		return "", errors.New("llm down")
-	}
-	return "员工满1年享5天年假[1]。", nil
-}
-
-func newTestServer(t *testing.T) (*Server, *fakeEmbedder, *fakeLLM, string) {
-	t.Helper()
-	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "kb.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	if err := st.InitMeta("test-model", 100); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SetDim(3); err != nil {
-		t.Fatal(err)
-	}
-	emb := &fakeEmbedder{}
-	llmFake := &fakeLLM{}
-	q := &query.Service{
-		Embedder:   emb,
-		Store:      st,
-		LLM:        llmFake,
-		EmbedModel: "test-model",
-		TopK:       8,
-		BaseDir:    dir,
-	}
-	frontend := filepath.Join(dir, "frontend")
-	if err := os.MkdirAll(frontend, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(frontend, "index.html"), []byte("<html><body>kb-rag</body></html>"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	uploads := filepath.Join(dir, "uploads")
-	if err := os.MkdirAll(uploads, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	token := "0123456789abcdef"
-	srv := New(Options{
-		Store:          st,
-		Embedder:       emb,
-		Query:          q,
-		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		UploadDir:      uploads,
-		MaxUploadBytes: 1 << 20,
-		FrontendDir:    frontend,
-		Token:          token,
-		IngestModel:    "test-model",
-		ChunkSize:      100,
-		Overlap:        20,
-	})
-	return srv, emb, llmFake, token
-}
-
-func call(t *testing.T, h http.Handler, method, path string, body []byte, token, contentType string) *httptest.ResponseRecorder {
-	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	return rec
-}
-
 func TestHealthIsPublic(t *testing.T) {
-	srv, _, _, _ := newTestServer(t)
-	rec := call(t, srv.Handler(), "GET", "/api/health", nil, "", "")
+	env := newTestServer(t)
+	rec := call(t, env.srv.Handler(), "GET", "/api/health", nil, "", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -126,37 +23,134 @@ func TestHealthIsPublic(t *testing.T) {
 }
 
 func TestAPIRequiresToken(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
-	if rec := call(t, srv.Handler(), "GET", "/api/session", nil, "", ""); rec.Code != http.StatusUnauthorized {
+	env := newTestServer(t)
+	if rec := call(t, env.srv.Handler(), "GET", "/api/session", nil, "", ""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("无令牌 status = %d", rec.Code)
 	}
-	if rec := call(t, srv.Handler(), "GET", "/api/session", nil, "wrong-token", ""); rec.Code != http.StatusUnauthorized {
+	if rec := call(t, env.srv.Handler(), "GET", "/api/session", nil, "wrong-token", ""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("错误令牌 status = %d", rec.Code)
 	}
-	if rec := call(t, srv.Handler(), "GET", "/api/session", nil, token, ""); rec.Code != http.StatusOK {
+	if rec := call(t, env.srv.Handler(), "GET", "/api/session", nil, env.tokens["viewer1"], ""); rec.Code != http.StatusOK {
 		t.Fatalf("正确令牌 status = %d", rec.Code)
 	}
 }
 
-func TestStatsAndEmptyDocuments(t *testing.T) {
-	srv, _, _, token := newTestServer(t)
-
-	rec := call(t, srv.Handler(), "GET", "/api/stats", nil, token, "")
+func TestLoginAndLogout(t *testing.T) {
+	env := newTestServer(t)
+	rec := login(t, env, "default", "viewer1", testPassword)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("stats status = %d", rec.Code)
+		t.Fatalf("login status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeLogin(t, rec)
+	if resp.Token == "" || resp.User.Role != "viewer" || resp.User.TenantSlug != "default" {
+		t.Fatalf("login = %+v", resp)
+	}
+
+	rec = call(t, env.srv.Handler(), "GET", "/api/session", nil, resp.Token, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session status = %d", rec.Code)
+	}
+	var session sessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.User.Username != "viewer1" || session.User.IsSuper {
+		t.Fatalf("session = %+v", session)
+	}
+
+	rec = call(t, env.srv.Handler(), "POST", "/api/logout", nil, resp.Token, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("logout status = %d", rec.Code)
+	}
+	if rec := call(t, env.srv.Handler(), "GET", "/api/session", nil, resp.Token, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("登出后 status = %d", rec.Code)
+	}
+
+	items, _, err := env.store.ListAudit(t.Context(), storeAuditFilter(env.defaultT.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := map[string]int{}
+	for _, item := range items {
+		actions[item.Action]++
+	}
+	if actions["login.success"] != 1 || actions["logout"] != 1 {
+		t.Fatalf("audit actions = %+v", actions)
+	}
+}
+
+func TestLoginFailure(t *testing.T) {
+	env := newTestServer(t)
+	cases := []struct {
+		tenant, username, password string
+	}{
+		{"default", "viewer1", "wrong-password-1"},
+		{"default", "ghost", testPassword},
+		{"missing", "viewer1", testPassword},
+	}
+	for _, c := range cases {
+		if rec := login(t, env, c.tenant, c.username, c.password); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("login(%+v) status = %d", c, rec.Code)
+		}
+	}
+	items, _, err := env.store.ListAudit(t.Context(), storeAuditFilter(env.defaultT.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failures := 0
+	for _, item := range items {
+		if item.Action == "login.failure" {
+			failures++
+		}
+	}
+	if failures != 2 {
+		t.Fatalf("租户内登录失败审计数 = %d，items=%+v", failures, items)
+	}
+	all, _, err := env.store.ListAudit(t.Context(), storeAuditFilterAll())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nullTenant := 0
+	for _, item := range all {
+		if item.Action == "login.failure" && item.TenantID == nil {
+			nullTenant++
+		}
+	}
+	if nullTenant != 1 {
+		t.Fatalf("未知租户登录失败应为 NULL tenant: %+v", all)
+	}
+}
+
+func TestLoginRateLimit(t *testing.T) {
+	env := newTestServer(t)
+	for i := 0; i < 5; i++ {
+		if rec := login(t, env, "default", "viewer1", "wrong-password-1"); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("第 %d 次 status = %d", i+1, rec.Code)
+		}
+	}
+	if rec := login(t, env, "default", "viewer1", "wrong-password-1"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("超限 status = %d", rec.Code)
+	}
+}
+
+func TestStatsAndEmptyDocuments(t *testing.T) {
+	env := newTestServer(t)
+	rec := env.callAs(t, "viewer1", "GET", "/api/stats", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	var stats statsDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
 		t.Fatal(err)
 	}
-	if stats.Documents != 0 || stats.Chunks != 0 {
+	if stats.Documents != 0 || stats.Chunks != 0 || stats.TenantSizeBytes != 0 {
 		t.Fatalf("stats = %+v", stats)
 	}
 	if stats.Embedding.Model != "test-model" || stats.Embedding.Dim != 3 || stats.Embedding.ChunkSize != 100 {
 		t.Fatalf("embedding = %+v", stats.Embedding)
 	}
 
-	rec = call(t, srv.Handler(), "GET", "/api/documents", nil, token, "")
+	rec = env.callAs(t, "viewer1", "GET", "/api/documents", nil, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("documents status = %d", rec.Code)
 	}
@@ -170,8 +164,8 @@ func TestStatsAndEmptyDocuments(t *testing.T) {
 }
 
 func TestStaticIndex(t *testing.T) {
-	srv, _, _, _ := newTestServer(t)
-	rec := call(t, srv.Handler(), "GET", "/", nil, "", "")
+	env := newTestServer(t)
+	rec := call(t, env.srv.Handler(), "GET", "/", nil, "", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("static status = %d", rec.Code)
 	}

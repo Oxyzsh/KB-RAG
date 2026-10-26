@@ -18,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = "2"
+const SchemaVersion = "3"
 
 type Store struct {
 	db   *sql.DB
@@ -64,6 +64,7 @@ type Stats struct {
 	DocumentsFailed int
 	Chunks          int
 	SizeBytes       int64
+	TenantSizeBytes int64
 	FailedPaths     []string
 	Meta            EmbeddingMeta
 }
@@ -115,45 +116,42 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
-	statements := []string{
-		`CREATE TABLE IF NOT EXISTS documents(
-			id INTEGER PRIMARY KEY,
-			path TEXT NOT NULL,
-			path_key TEXT NOT NULL UNIQUE,
-			title TEXT NOT NULL DEFAULT '',
-			content_hash TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'ok',
-			error TEXT NOT NULL DEFAULT '',
-			updated_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS chunks(
-			id INTEGER PRIMARY KEY,
-			doc_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-			seq INTEGER NOT NULL,
-			heading TEXT NOT NULL DEFAULT '',
-			text TEXT NOT NULL,
-			vector BLOB NOT NULL,
-			dim INTEGER NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id)`,
-		`CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+	hasMeta, err := tableExists(s.db, "meta")
+	if err != nil {
+		return err
 	}
-	for _, stmt := range statements {
-		if _, err := s.db.Exec(stmt); err != nil {
-			return fmt.Errorf("初始化数据库: %w", err)
+	if !hasMeta {
+		hasDocs, err := tableExists(s.db, "documents")
+		if err != nil {
+			return err
 		}
+		if hasDocs {
+			return fmt.Errorf("数据库缺少 meta 表，无法确认版本；请恢复备份")
+		}
+		return s.initFreshV3(context.Background())
 	}
 	version, ok, err := s.metaGet("schema_version")
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return s.metaSet("schema_version", SchemaVersion)
+		hasDocs, err := tableExists(s.db, "documents")
+		if err != nil {
+			return err
+		}
+		if hasDocs {
+			return fmt.Errorf("数据库缺少 schema_version，无法确认版本；请恢复备份")
+		}
+		return s.initFreshV3(context.Background())
 	}
-	if version != SchemaVersion {
-		return fmt.Errorf("数据库 schema 版本 %s 与程序 %s 不一致，请删除库文件后重建", version, SchemaVersion)
+	switch version {
+	case SchemaVersion:
+		return nil
+	case "2":
+		return s.migrateV2ToV3(context.Background())
+	default:
+		return fmt.Errorf("数据库 schema 版本 %s 与程序 %s 不一致，请恢复备份或重新 ingest", version, SchemaVersion)
 	}
-	return nil
 }
 
 func (s *Store) metaGet(key string) (string, bool, error) {
@@ -263,9 +261,9 @@ func (s *Store) SetDim(dim int) error {
 	return nil
 }
 
-func (s *Store) GetDocument(path string) (DocumentInfo, bool, error) {
+func (s *Store) GetDocument(ctx context.Context, tenantID int64, path string) (DocumentInfo, bool, error) {
 	var info DocumentInfo
-	err := s.db.QueryRow(`SELECT id,path,title,content_hash,status,error,updated_at FROM documents WHERE path_key=?`, pathKey(path)).
+	err := s.db.QueryRowContext(ctx, `SELECT id,path,title,content_hash,status,error,updated_at FROM documents WHERE tenant_id=? AND path_key=?`, tenantID, pathKey(path)).
 		Scan(&info.ID, &info.Path, &info.Title, &info.Hash, &info.Status, &info.Error, &info.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DocumentInfo{}, false, nil
@@ -276,7 +274,7 @@ func (s *Store) GetDocument(path string) (DocumentInfo, bool, error) {
 	return info, true, nil
 }
 
-func (s *Store) ReplaceDocument(ctx context.Context, path, title, hash string, chunks []ChunkInput) error {
+func (s *Store) ReplaceDocument(ctx context.Context, tenantID int64, path, title, hash string, chunks []ChunkInput) error {
 	dim, err := s.dim()
 	if err != nil {
 		return err
@@ -297,14 +295,14 @@ func (s *Store) ReplaceDocument(ctx context.Context, path, title, hash string, c
 	defer tx.Rollback()
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO documents(path,path_key,title,content_hash,status,error,updated_at)
-		VALUES(?,?,?,?,'ok','',?)
-		ON CONFLICT(path_key) DO UPDATE SET path=excluded.path, title=excluded.title, content_hash=excluded.content_hash,
-			status='ok', error='', updated_at=excluded.updated_at`, path, pathKey(path), title, hash, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO documents(tenant_id,path,path_key,title,content_hash,status,error,updated_at)
+		VALUES(?,?,?,?,?,'ok','',?)
+		ON CONFLICT(tenant_id,path_key) DO UPDATE SET path=excluded.path, title=excluded.title, content_hash=excluded.content_hash,
+			status='ok', error='', updated_at=excluded.updated_at`, tenantID, path, pathKey(path), title, hash, now); err != nil {
 		return err
 	}
 	var docID int64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM documents WHERE path_key=?`, pathKey(path)).Scan(&docID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM documents WHERE tenant_id=? AND path_key=?`, tenantID, pathKey(path)).Scan(&docID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE doc_id=?`, docID); err != nil {
@@ -323,16 +321,16 @@ func (s *Store) ReplaceDocument(ctx context.Context, path, title, hash string, c
 	return tx.Commit()
 }
 
-func (s *Store) MarkFailed(ctx context.Context, path, title, hash, msg string) error {
+func (s *Store) MarkFailed(ctx context.Context, tenantID int64, path, title, hash, msg string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO documents(path,path_key,title,content_hash,status,error,updated_at)
-		VALUES(?,?,?,?,'failed',?,?)
-		ON CONFLICT(path_key) DO UPDATE SET path=excluded.path, title=excluded.title, content_hash=excluded.content_hash,
-			status='failed', error=excluded.error, updated_at=excluded.updated_at`, path, pathKey(path), title, hash, msg, now)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO documents(tenant_id,path,path_key,title,content_hash,status,error,updated_at)
+		VALUES(?,?,?,?,?,'failed',?,?)
+		ON CONFLICT(tenant_id,path_key) DO UPDATE SET path=excluded.path, title=excluded.title, content_hash=excluded.content_hash,
+			status='failed', error=excluded.error, updated_at=excluded.updated_at`, tenantID, path, pathKey(path), title, hash, msg, now)
 	return err
 }
 
-func (s *Store) Search(ctx context.Context, query []float32, topK int) ([]Hit, error) {
+func (s *Store) Search(ctx context.Context, tenantID int64, query []float32, topK int) ([]Hit, error) {
 	if topK <= 0 {
 		return nil, fmt.Errorf("top-k 必须大于 0")
 	}
@@ -348,7 +346,7 @@ func (s *Store) Search(ctx context.Context, query []float32, topK int) ([]Hit, e
 	}
 	q := normalize(query)
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.doc_id,c.heading,c.text,c.vector,c.dim,d.path,d.title
-		FROM chunks c JOIN documents d ON d.id=c.doc_id WHERE d.status='ok'`)
+		FROM chunks c JOIN documents d ON d.id=c.doc_id WHERE d.status='ok' AND d.tenant_id=?`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -391,18 +389,18 @@ func (s *Store) Search(ctx context.Context, query []float32, topK int) ([]Hit, e
 	return hits, nil
 }
 
-func (s *Store) Stats(ctx context.Context) (Stats, error) {
+func (s *Store) Stats(ctx context.Context, tenantID int64) (Stats, error) {
 	var stats Stats
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents`).Scan(&stats.Documents); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE tenant_id=?`, tenantID).Scan(&stats.Documents); err != nil {
 		return stats, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE status='failed'`).Scan(&stats.DocumentsFailed); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents WHERE tenant_id=? AND status='failed'`, tenantID).Scan(&stats.DocumentsFailed); err != nil {
 		return stats, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chunks`).Scan(&stats.Chunks); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chunks c JOIN documents d ON d.id=c.doc_id WHERE d.tenant_id=?`, tenantID).Scan(&stats.Chunks); err != nil {
 		return stats, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT path FROM documents WHERE status='failed' ORDER BY path`)
+	rows, err := s.db.QueryContext(ctx, `SELECT path FROM documents WHERE tenant_id=? AND status='failed' ORDER BY path`, tenantID)
 	if err != nil {
 		return stats, err
 	}
@@ -419,6 +417,10 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 		return stats, err
 	}
 	rows.Close()
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(LENGTH(c.text)+LENGTH(c.heading)+LENGTH(c.vector)+LENGTH(d.path)+LENGTH(d.title)),0)
+		FROM chunks c JOIN documents d ON d.id=c.doc_id WHERE d.tenant_id=?`, tenantID).Scan(&stats.TenantSizeBytes); err != nil {
+		return stats, err
+	}
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		if info, err := os.Stat(s.path + suffix); err == nil {
 			stats.SizeBytes += info.Size()
@@ -432,11 +434,12 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	return stats, nil
 }
 
-func (s *Store) ListDocuments(ctx context.Context) ([]DocumentSummary, error) {
+func (s *Store) ListDocuments(ctx context.Context, tenantID int64) ([]DocumentSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT d.id,d.path,d.title,d.status,d.error,d.updated_at,COUNT(c.id)
 		FROM documents d LEFT JOIN chunks c ON c.doc_id=d.id
+		WHERE d.tenant_id=?
 		GROUP BY d.id,d.path,d.title,d.status,d.error,d.updated_at
-		ORDER BY d.updated_at DESC, d.id DESC`)
+		ORDER BY d.updated_at DESC, d.id DESC`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -453,10 +456,26 @@ func (s *Store) ListDocuments(ctx context.Context) ([]DocumentSummary, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) GetDocumentByID(ctx context.Context, id int64) (DocumentInfo, bool, error) {
+func (s *Store) GetDocumentSummaryByID(ctx context.Context, tenantID, id int64) (DocumentSummary, bool, error) {
+	var d DocumentSummary
+	err := s.db.QueryRowContext(ctx, `SELECT d.id,d.path,d.title,d.status,d.error,d.updated_at,COUNT(c.id)
+		FROM documents d LEFT JOIN chunks c ON c.doc_id=d.id
+		WHERE d.id=? AND d.tenant_id=?
+		GROUP BY d.id,d.path,d.title,d.status,d.error,d.updated_at`, id, tenantID).
+		Scan(&d.ID, &d.Path, &d.Title, &d.Status, &d.Error, &d.UpdatedAt, &d.Chunks)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DocumentSummary{}, false, nil
+	}
+	if err != nil {
+		return DocumentSummary{}, false, err
+	}
+	return d, true, nil
+}
+
+func (s *Store) GetDocumentByID(ctx context.Context, tenantID, id int64) (DocumentInfo, bool, error) {
 	var info DocumentInfo
 	err := s.db.QueryRowContext(ctx, `SELECT id,path,title,content_hash,status,error,updated_at
-		FROM documents WHERE id=?`, id).
+		FROM documents WHERE id=? AND tenant_id=?`, id, tenantID).
 		Scan(&info.ID, &info.Path, &info.Title, &info.Hash, &info.Status, &info.Error, &info.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DocumentInfo{}, false, nil
@@ -467,8 +486,8 @@ func (s *Store) GetDocumentByID(ctx context.Context, id int64) (DocumentInfo, bo
 	return info, true, nil
 }
 
-func (s *Store) DeleteDocument(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM documents WHERE id=?`, id)
+func (s *Store) DeleteDocument(ctx context.Context, tenantID, id int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM documents WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
 		return err
 	}
