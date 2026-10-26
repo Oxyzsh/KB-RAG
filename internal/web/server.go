@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /session", s.handleSession)
 	api.HandleFunc("GET /stats", s.handleStats)
 	api.HandleFunc("GET /documents", s.handleListDocuments)
+	api.HandleFunc("POST /documents", s.handleUploadDocument)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", s.withAuth(http.StripPrefix("/api", api)))
