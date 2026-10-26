@@ -82,18 +82,15 @@ async function submit() {
   display: grid;
   min-height: 100vh;
   place-items: center;
-  background:
-    radial-gradient(circle at 15% 20%, rgba(46, 144, 250, 0.22), transparent 32%),
-    radial-gradient(circle at 85% 80%, rgba(16, 24, 40, 0.12), transparent 30%),
-    #f5f7fb;
+  background: #f7f8fa;
   padding: 24px;
 }
 
 .login-card {
   width: min(420px, 100%);
-  border: 1px solid #e4e7ec;
-  border-radius: 16px;
-  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px;
 }
 
 .login-brand {
@@ -121,7 +118,7 @@ async function submit() {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: #2e90fa;
+  background: #2563eb;
   color: #fff;
   font-size: 20px;
   font-weight: 700;

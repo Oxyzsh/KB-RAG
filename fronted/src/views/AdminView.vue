@@ -283,47 +283,33 @@ onMounted(() => {
   <div class="page admin-page">
     <div class="page-header">
       <div>
-        <h2>系统控制台</h2>
-        <p class="muted">用户授权、审计日志追溯与多租户管理</p>
+        <h2>系统管理</h2>
+        <p class="muted">管理本租户用户、查看审计日志；超级管理员可创建租户并重置租户管理员密码。</p>
       </div>
     </div>
 
     <el-tabs v-model="activeTab" class="custom-tabs" @tab-change="onTabChange">
-      <el-tab-pane label="用户成员管理" name="users">
+      <el-tab-pane label="用户管理" name="users">
         <el-card class="panel" shadow="never">
           <template #header>
             <div class="panel-header">
-              <div class="header-left">
-                <span>租户用户列表</span>
-                <span class="count-tag">{{ users.length }} 名成员</span>
-              </div>
-              <el-button type="primary" size="small" @click="openCreateUser">添加成员</el-button>
+              <span>用户<span class="count">共 {{ users.length }} 人</span></span>
+              <el-button type="primary" size="small" @click="openCreateUser">新建用户</el-button>
             </div>
           </template>
           <el-table v-loading="usersLoading" :data="users" stripe>
-            <el-table-column prop="username" label="用户名" min-width="160">
+            <el-table-column label="用户名" min-width="160">
               <template #default="{ row }">
-                <div class="user-cell">
-                  <span class="user-avatar">👤</span>
-                  <span class="user-name">{{ row.username }}</span>
-                  <el-tag v-if="row.is_super" class="super-tag" type="danger" size="small" effect="dark">
-                    超级管理员
-                  </el-tag>
-                </div>
+                <span class="user-name">{{ row.username }}</span>
+                <span v-if="row.is_super" class="super-label">超级管理员</span>
               </template>
             </el-table-column>
-            <el-table-column label="角色权限" width="130">
+            <el-table-column label="角色" width="110">
               <template #default="{ row }">
-                <el-tag
-                  :type="row.role === 'admin' ? 'danger' : row.role === 'editor' ? 'primary' : 'info'"
-                  size="small"
-                  effect="light"
-                >
-                  {{ roleLabels[row.role as Role] }}
-                </el-tag>
+                <span class="role-text">{{ roleLabels[row.role as Role] }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="加入时间" width="180">
+            <el-table-column label="创建时间" width="180">
               <template #default="{ row }">
                 <span class="time-text">{{ formatTime(row.created_at) }}</span>
               </template>
@@ -332,17 +318,17 @@ onMounted(() => {
               <template #default="{ row }">
                 <template v-if="!row.is_super">
                   <el-button size="small" link type="primary" @click="openRole(row as User)">修改角色</el-button>
-                  <el-button size="small" link type="warning" @click="resetPassword(row as User)">重置密码</el-button>
+                  <el-button size="small" link type="primary" @click="resetPassword(row as User)">重置密码</el-button>
                   <el-button size="small" link type="danger" @click="removeUser(row as User)">删除</el-button>
                 </template>
-                <span v-else class="muted-tag">内置超管保护</span>
+                <span v-else class="muted">受保护</span>
               </template>
             </el-table-column>
           </el-table>
         </el-card>
       </el-tab-pane>
 
-      <el-tab-pane label="安全审计追踪" name="audit">
+      <el-tab-pane label="审计日志" name="audit">
         <el-card class="panel" shadow="never">
           <template #header>
             <div class="panel-header audit-header">
@@ -351,23 +337,20 @@ onMounted(() => {
                   v-model="auditAction"
                   size="small"
                   class="audit-action"
-                  placeholder="按操作行为过滤 (如 ask, document.upload)"
+                  placeholder="按动作过滤，如 ask"
                   clearable
                   @keyup.enter="applyAuditFilter"
                 />
-                <el-checkbox v-if="isSuper" v-model="auditScopeAll" border size="small">查看全局租户</el-checkbox>
-                <el-button size="small" type="primary" plain @click="applyAuditFilter">检索</el-button>
+                <el-checkbox v-if="isSuper" v-model="auditScopeAll">全局</el-checkbox>
+                <el-button size="small" @click="applyAuditFilter">查询</el-button>
               </div>
-              <span class="muted">共查询到 {{ auditTotal }} 条审计记录</span>
+              <span class="muted">共 {{ auditTotal }} 条</span>
             </div>
           </template>
           <el-table v-loading="auditLoading" :data="audit" stripe>
             <el-table-column type="expand">
               <template #default="{ row }">
-                <div class="detail-wrapper">
-                  <div class="detail-title">操作元数据 (Detail Payload)</div>
-                  <pre class="audit-detail">{{ row.detail }}</pre>
-                </div>
+                <pre class="audit-detail">{{ row.detail }}</pre>
               </template>
             </el-table-column>
             <el-table-column label="时间" width="170">
@@ -376,22 +359,16 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column label="租户" width="110">
+              <template #default="{ row }">{{ row.tenant_slug || '-' }}</template>
+            </el-table-column>
+            <el-table-column prop="username" label="用户" width="130" />
+            <el-table-column prop="action" label="动作" width="160">
               <template #default="{ row }">
-                <el-tag size="small" type="info" effect="plain">{{ row.tenant_slug || '系统未归属' }}</el-tag>
+                <code class="action-code">{{ row.action }}</code>
               </template>
             </el-table-column>
-            <el-table-column prop="username" label="操作人" width="130">
-              <template #default="{ row }">
-                <strong>{{ row.username || '-' }}</strong>
-              </template>
-            </el-table-column>
-            <el-table-column prop="action" label="动作类型" width="160">
-              <template #default="{ row }">
-                <span class="action-code">{{ row.action }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="target" label="操作目标" min-width="150" />
-            <el-table-column prop="ip" label="来源 IP" width="130" />
+            <el-table-column prop="target" label="目标" min-width="150" />
+            <el-table-column prop="ip" label="IP" width="130" />
           </el-table>
           <div class="audit-pagination">
             <el-pagination
@@ -406,28 +383,25 @@ onMounted(() => {
         </el-card>
       </el-tab-pane>
 
-      <el-tab-pane v-if="isSuper" label="租户配置中心" name="tenants">
+      <el-tab-pane v-if="isSuper" label="租户管理" name="tenants">
         <el-card class="panel" shadow="never">
           <template #header>
             <div class="panel-header">
-              <div class="header-left">
-                <span>系统租户列表</span>
-                <span class="count-tag">{{ tenants.length }} 个租户</span>
-              </div>
-              <el-button type="primary" size="small" @click="openCreateTenant">创建新租户</el-button>
+              <span>租户<span class="count">共 {{ tenants.length }} 个</span></span>
+              <el-button type="primary" size="small" @click="openCreateTenant">新建租户</el-button>
             </div>
           </template>
           <el-table v-loading="tenantsLoading" :data="tenants" stripe>
-            <el-table-column prop="slug" label="租户唯一标识 (Slug)" width="200">
+            <el-table-column prop="slug" label="标识" width="200">
               <template #default="{ row }">
                 <code class="slug-code">{{ row.slug }}</code>
               </template>
             </el-table-column>
-            <el-table-column prop="name" label="租户显示名称" min-width="200" />
-            <el-table-column label="管理员运维" width="180">
+            <el-table-column prop="name" label="名称" min-width="200" />
+            <el-table-column label="操作" width="180">
               <template #default="{ row }">
-                <el-button size="small" link type="warning" @click="openResetTenantAdmin(row as Tenant)">
-                  重置租户管理员密码
+                <el-button size="small" link type="primary" @click="openResetTenantAdmin(row as Tenant)">
+                  重置管理员密码
                 </el-button>
               </template>
             </el-table-column>
@@ -514,110 +488,66 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.admin-page {
-  max-width: 1200px;
-}
-
-.custom-tabs :deep(.el-tabs__nav-wrap::after) {
-  height: 1px;
-  background-color: #e2e8f0;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.count-tag {
+.count {
+  margin-left: 8px;
+  color: #9ca3af;
   font-size: 12px;
-  color: #64748b;
-  background: #f1f5f9;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.user-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.user-avatar {
-  font-size: 16px;
+  font-weight: 400;
 }
 
 .user-name {
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.super-tag {
+  color: #111827;
   font-weight: 500;
-  border-radius: 4px;
 }
 
-.muted-tag {
-  color: #94a3b8;
+.super-label {
+  margin-left: 8px;
+  color: #9ca3af;
   font-size: 12px;
 }
 
+.role-text {
+  color: #4b5563;
+  font-size: 13px;
+}
+
 .time-text {
+  color: #6b7280;
   font-size: 12.5px;
-  color: #64748b;
 }
 
 .audit-header {
   flex-wrap: wrap;
-  gap: 12px;
 }
 
 .audit-filters {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .audit-action {
-  width: 260px;
+  width: 220px;
 }
 
 .action-code {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
-  background: #f1f5f9;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: #0f172a;
+  color: #374151;
 }
 
 .slug-code {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
-  color: #2563eb;
-  background: #eff6ff;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.detail-wrapper {
-  padding: 12px 16px;
-  background: #f8fafc;
-  border-radius: 8px;
-  border: 1px solid #f1f5f9;
-}
-
-.detail-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #475569;
-  margin-bottom: 6px;
+  color: #374151;
 }
 
 .audit-detail {
   margin: 0;
+  padding: 10px 16px;
+  background: #f9fafb;
+  color: #4b5563;
   font-size: 12px;
-  color: #334155;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -625,8 +555,6 @@ onMounted(() => {
 .audit-pagination {
   display: flex;
   justify-content: flex-end;
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid #f1f5f9;
+  margin-top: 14px;
 }
 </style>

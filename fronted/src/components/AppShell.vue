@@ -80,8 +80,9 @@ async function signOut() {
 .sidebar {
   display: flex;
   flex-direction: column;
-  background: #101828;
-  color: #e4e7ec;
+  background: #ffffff;
+  color: #374151;
+  border-right: 1px solid #e5e7eb;
   padding: 18px 12px;
 }
 
@@ -98,7 +99,7 @@ async function signOut() {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: #2e90fa;
+  background: #2563eb;
   color: #fff;
   font-weight: 700;
 }
@@ -112,25 +113,27 @@ async function signOut() {
 .brand small {
   display: block;
   margin-top: 2px;
-  color: #98a2b3;
+  color: #9ca3af;
   font-size: 12px;
 }
 
 .user-card {
   margin: 0 6px 14px;
   padding: 10px 12px;
-  border-radius: 10px;
-  background: #1d2939;
+  border: 1px solid #f0f1f3;
+  border-radius: 6px;
+  background: #f9fafb;
 }
 
 .user-name {
   font-size: 13px;
   font-weight: 600;
+  color: #111827;
 }
 
 .user-meta {
   margin-top: 3px;
-  color: #98a2b3;
+  color: #6b7280;
   font-size: 12px;
 }
 
@@ -138,18 +141,18 @@ async function signOut() {
   border-right: none;
   background: transparent;
   --el-menu-bg-color: transparent;
-  --el-menu-text-color: #cbd5e1;
-  --el-menu-hover-bg-color: #1d2939;
-  --el-menu-active-color: #ffffff;
+  --el-menu-text-color: #4b5563;
+  --el-menu-hover-bg-color: #f3f4f6;
+  --el-menu-active-color: #2563eb;
 }
 
 .nav :deep(.el-menu-item.is-active) {
-  background: #2e90fa;
-  border-radius: 8px;
+  background: #eff6ff;
+  border-radius: 6px;
 }
 
 .nav :deep(.el-menu-item:hover) {
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 .sidebar-footer {
@@ -158,7 +161,7 @@ async function signOut() {
 }
 
 .sidebar-footer .el-button {
-  color: #98a2b3;
+  color: #6b7280;
 }
 
 .main {
