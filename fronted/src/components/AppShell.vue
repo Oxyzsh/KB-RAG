@@ -1,14 +1,44 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { clearToken } from '../api/client'
+import { clearToken, logout } from '../api/client'
+import { clearSession, loadSession, session } from '../session'
 
 const route = useRoute()
 const router = useRouter()
 const active = computed(() => route.path)
 
-function logout() {
+const roleLabel = computed(() => {
+  switch (session.user?.role) {
+    case 'admin':
+      return session.user.is_super ? '超级管理员' : '管理员'
+    case 'editor':
+      return '编辑者'
+    case 'viewer':
+      return '只读'
+    default:
+      return ''
+  }
+})
+
+onMounted(async () => {
+  if (!session.user) {
+    try {
+      await loadSession()
+    } catch {
+      // 401 已由 client 跳转登录页。
+    }
+  }
+})
+
+async function signOut() {
+  try {
+    await logout()
+  } catch {
+    // 会话可能已过期，本地清理后统一回登录页。
+  }
   clearToken()
+  clearSession()
   router.replace('/login')
 }
 </script>
@@ -23,12 +53,17 @@ function logout() {
           <small>企业知识库</small>
         </div>
       </div>
+      <div v-if="session.user" class="user-card">
+        <div class="user-name">{{ session.user.username }}</div>
+        <div class="user-meta">{{ session.user.tenant_name }} · {{ roleLabel }}</div>
+      </div>
       <el-menu :default-active="active" router class="nav">
         <el-menu-item index="/chat">知识问答</el-menu-item>
         <el-menu-item index="/documents">知识库管理</el-menu-item>
+        <el-menu-item v-if="session.user?.role === 'admin'" index="/admin">系统管理</el-menu-item>
       </el-menu>
       <div class="sidebar-footer">
-        <el-button text @click="logout">退出登录</el-button>
+        <el-button text @click="signOut">退出登录</el-button>
       </div>
     </el-aside>
     <el-main class="main">
@@ -54,7 +89,7 @@ function logout() {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 10px 22px;
+  padding: 6px 10px 16px;
 }
 
 .brand-mark {
@@ -77,6 +112,24 @@ function logout() {
 .brand small {
   display: block;
   margin-top: 2px;
+  color: #98a2b3;
+  font-size: 12px;
+}
+
+.user-card {
+  margin: 0 6px 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #1d2939;
+}
+
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.user-meta {
+  margin-top: 3px;
   color: #98a2b3;
   font-size: 12px;
 }
