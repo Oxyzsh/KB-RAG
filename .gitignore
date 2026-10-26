@@ -2,3 +2,5 @@
 /config.yaml
 *.exe
 coverage.out
+/fronted/node_modules/
+/fronted/dist/

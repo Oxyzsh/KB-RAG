@@ -14,5 +14,11 @@ chunk:
 store:
   path: ./data/KB-RAG.db
 
+web:
+  addr: 127.0.0.1:8080
+  upload_dir: ./data/uploads
+  max_upload_mb: 20
+  frontend_dir: ./fronted/dist
+
 log:
   file: ./data/logs/KB-RAG.log

@@ -1,0 +1,98 @@
+import type {
+  AskResponse,
+  DocumentListResponse,
+  ErrorBody,
+  Stats,
+  UploadResponse,
+} from './types'
+
+const TOKEN_KEY = 'kbrag_token'
+
+export class ApiError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+export function getToken(): string {
+  return sessionStorage.getItem(TOKEN_KEY) ?? ''
+}
+
+export function setToken(token: string): void {
+  sessionStorage.setItem(TOKEN_KEY, token)
+}
+
+export function clearToken(): void {
+  sessionStorage.removeItem(TOKEN_KEY)
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers)
+  const token = getToken()
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+
+  const res = await fetch(`/api${path}`, { ...init, headers })
+  const text = await res.text()
+  let data: unknown = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = null
+    }
+  }
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      clearToken()
+      if (!window.location.hash.startsWith('#/login')) {
+        window.location.hash = '#/login'
+      }
+    }
+    const message = (data as ErrorBody | null)?.error ?? `请求失败（HTTP ${res.status}）`
+    throw new ApiError(res.status, message)
+  }
+  return data as T
+}
+
+export function verifySession(): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/session')
+}
+
+export function getStats(): Promise<Stats> {
+  return request<Stats>('/stats')
+}
+
+export function listDocuments(): Promise<DocumentListResponse> {
+  return request<DocumentListResponse>('/documents')
+}
+
+export function uploadDocument(file: File): Promise<UploadResponse> {
+  const form = new FormData()
+  form.append('file', file)
+  return request<UploadResponse>('/documents', { method: 'POST', body: form })
+}
+
+export function deleteDocument(id: number): Promise<void> {
+  return request<void>(`/documents/${id}`, { method: 'DELETE' })
+}
+
+export function reingestDocument(id: number): Promise<UploadResponse> {
+  return request<UploadResponse>(`/documents/${id}/reingest`, { method: 'POST' })
+}
+
+export function ask(question: string, topK: number): Promise<AskResponse> {
+  return request<AskResponse>('/ask', {
+    method: 'POST',
+    body: JSON.stringify({ question, top_k: topK }),
+  })
+}

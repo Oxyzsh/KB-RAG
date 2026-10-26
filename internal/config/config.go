@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -16,7 +18,9 @@ type Config struct {
 	Chunk     ChunkConfig     `yaml:"chunk"`
 	Store     StoreConfig     `yaml:"store"`
 	Log       LogConfig       `yaml:"log"`
+	Web       WebConfig       `yaml:"web"`
 	APIKey    string          `yaml:"-"`
+	WebToken  string          `yaml:"-"`
 }
 
 type EmbeddingConfig struct {
@@ -43,12 +47,25 @@ type LogConfig struct {
 	File string `yaml:"file"`
 }
 
+type WebConfig struct {
+	Addr        string `yaml:"addr"`
+	UploadDir   string `yaml:"upload_dir"`
+	MaxUploadMB int    `yaml:"max_upload_mb"`
+	FrontendDir string `yaml:"frontend_dir"`
+}
+
 func defaults() Config {
 	return Config{
 		Embedding: EmbeddingConfig{BaseURL: "http://localhost:11434", Model: "bge-m3", BatchSize: 16},
 		Chunk:     ChunkConfig{Size: 500, Overlap: 80},
 		Store:     StoreConfig{Path: "./data/KB-RAG.db"},
 		Log:       LogConfig{File: "./data/logs/KB-RAG.log"},
+		Web: WebConfig{
+			Addr:        "127.0.0.1:8080",
+			UploadDir:   "./data/uploads",
+			MaxUploadMB: 20,
+			FrontendDir: "./fronted/dist",
+		},
 	}
 }
 
@@ -62,6 +79,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置文件 %s: %w", path, err)
 	}
 	cfg.APIKey = os.Getenv("KB_RAG_LLM_API_KEY")
+	cfg.WebToken = os.Getenv("KB_RAG_WEB_TOKEN")
 	return &cfg, nil
 }
 
@@ -90,7 +108,7 @@ func (c *Config) Validate(command string) error {
 	if err := ensureDir(filepath.Dir(c.Log.File)); err != nil {
 		return err
 	}
-	if command == "ask" {
+	if command == "ask" || command == "serve" {
 		if err := validateURL("llm.base_url", c.LLM.BaseURL); err != nil {
 			return err
 		}
@@ -100,6 +118,47 @@ func (c *Config) Validate(command string) error {
 		if c.APIKey == "" {
 			return fmt.Errorf("环境变量 KB_RAG_LLM_API_KEY 不能为空")
 		}
+	}
+	if command == "serve" {
+		return c.validateServe()
+	}
+	return nil
+}
+
+func (c *Config) validateServe() error {
+	if err := validateAddr(c.Web.Addr); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.Web.UploadDir) == "" {
+		return fmt.Errorf("web.upload_dir 不能为空")
+	}
+	if err := ensureDir(c.Web.UploadDir); err != nil {
+		return err
+	}
+	if c.Web.MaxUploadMB <= 0 {
+		return fmt.Errorf("web.max_upload_mb 必须大于 0")
+	}
+	if strings.TrimSpace(c.Web.FrontendDir) == "" {
+		return fmt.Errorf("web.frontend_dir 不能为空")
+	}
+	index := filepath.Join(c.Web.FrontendDir, "index.html")
+	if _, err := os.Stat(index); err != nil {
+		return fmt.Errorf("前端未构建：缺少 %s，请先在 fronted 执行 npm run build", index)
+	}
+	if len(c.WebToken) < 16 {
+		return fmt.Errorf("环境变量 KB_RAG_WEB_TOKEN 至少需要 16 个字符")
+	}
+	return nil
+}
+
+func validateAddr(raw string) error {
+	_, port, err := net.SplitHostPort(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("web.addr 必须是 host:port（当前为 %q）", raw)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("web.addr 端口非法（当前为 %q）", raw)
 	}
 	return nil
 }

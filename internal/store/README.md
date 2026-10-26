@@ -63,6 +63,8 @@ func (s *Store) MarkFailed(ctx, path, title, hash, msg string) error
 - `ReplaceDocument` 在一个事务内：upsert 文档、删除旧片段、插入新片段；任意一步失败整体回滚。
 - `MarkFailed` 只更新文档状态与错误，**保留旧片段**；`status=failed` 的文档不参与检索，但会在下次 ingest 时重试。
 - 源文件删除不会自动清理记录（第一期没有 prune）。
+- `ListDocuments`：按 `updated_at DESC, id DESC` 返回文档摘要，并统计每个文档的片段数。
+- `GetDocumentByID` / `DeleteDocument`：按 ID 查询与删除。删除只移除数据库记录，`chunks` 通过外键级联删除；源文件不受影响。
 
 ## 检索
 

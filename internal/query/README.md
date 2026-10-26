@@ -20,6 +20,10 @@ func (s *Service) Ask(ctx context.Context, question string) (Result, error)
 
 `Result` 包含答案、命中的 `store.Hit` 列表以及是否真正生成成功（`Generated`）。
 
+- `Ask` 使用 Service 的固定 `TopK`，供 CLI 使用；
+- `AskWithTopK(ctx, question, topK)` 允许按请求指定 top-k，供 Web API 使用；
+- `ErrEmptyStore` / `ErrNoResults` / `ErrModelMismatch` 用于 API 区分 409 响应。
+
 ## 流程
 
 1. 校验库内元信息：`meta.model` 与配置的嵌入模型一致、维度已初始化；
