@@ -29,10 +29,24 @@ export interface DocumentItem {
 
 export interface Citation {
   n: number
+  document_id: number
   source: string
   heading: string
   text: string
   score: number
+}
+
+export type DocumentKind = 'markdown' | 'text' | 'pdf' | 'docx' | 'other'
+
+export interface DocumentPreview {
+  id: number
+  title: string
+  name: string
+  source: DocumentSource
+  kind: DocumentKind
+  text: string
+  text_format: 'markdown' | 'plain'
+  raw_available: boolean
 }
 
 export interface AskResponse {

@@ -153,11 +153,12 @@ func citationsFromHits(hits []store.Hit) []citationDTO {
 	out := make([]citationDTO, 0, len(hits))
 	for i, hit := range hits {
 		out = append(out, citationDTO{
-			N:       i + 1,
-			Source:  filepath.Base(hit.Path),
-			Heading: hit.Heading,
-			Text:    hit.Text,
-			Score:   hit.Score,
+			N:          i + 1,
+			DocumentID: hit.DocID,
+			Source:     filepath.Base(hit.Path),
+			Heading:    hit.Heading,
+			Text:       hit.Text,
+			Score:      hit.Score,
 		})
 	}
 	return out

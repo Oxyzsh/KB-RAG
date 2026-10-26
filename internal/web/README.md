@@ -45,6 +45,8 @@ X-Tenant: <租户 slug>
 | GET | `/api/session` | 登录 | 当前用户/租户/角色 |
 | GET | `/api/stats` | 登录 | 本租户文档/片段/模型/数据量 |
 | GET | `/api/documents` | 登录 | 本租户文档列表 |
+| GET | `/api/documents/{id}/preview` | 登录 | 引用来源预览（原文或片段） |
+| GET | `/api/documents/{id}/raw` | 登录 | 托管上传文件原文（PDF 内联、DOCX 下载） |
 | POST | `/api/documents` | admin/editor | multipart 字段 `file`，同步上传并入库 |
 | DELETE | `/api/documents/{id}` | admin/editor | 只删索引，源文件保留 |
 | POST | `/api/documents/{id}/reingest` | admin/editor | 同步重试/重新入库 |
@@ -83,6 +85,18 @@ data: {"answer":"完整答案","generated":true}
 ```
 
 生成失败时发送 `event: error`；客户端中断会取消上游生成。检索阶段失败仍返回普通 JSON 错误（400/409/502）。
+
+## 引用来源预览
+
+引用 DTO 带 `document_id`，前端可调用：
+
+- `GET /api/documents/{id}/preview`：返回标题、文件名、来源、类型、文本与 `raw_available`；
+  - Markdown/TXT 且文件在托管上传目录时返回原文；
+  - PDF/DOCX 或 CLI 外部文件返回已索引片段拼成的文本；
+  - 不返回服务器绝对路径。
+- `GET /api/documents/{id}/raw`：仅允许 `web.upload_dir` 下的文件；PDF/Markdown/TXT 内联，DOCX 下载；外部 CLI 文件返回 403。
+
+所有预览接口按租户隔离，跨租户统一 404。
 
 ## 上传
 

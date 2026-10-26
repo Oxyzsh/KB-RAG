@@ -30,12 +30,24 @@ type listDocumentsResponse struct {
 	Documents []documentDTO `json:"documents"`
 }
 
+type documentPreviewDTO struct {
+	ID           int64  `json:"id"`
+	Title        string `json:"title"`
+	Name         string `json:"name"`
+	Source       string `json:"source"`
+	Kind         string `json:"kind"`
+	Text         string `json:"text"`
+	TextFormat   string `json:"text_format"`
+	RawAvailable bool   `json:"raw_available"`
+}
+
 type citationDTO struct {
-	N       int     `json:"n"`
-	Source  string  `json:"source"`
-	Heading string  `json:"heading"`
-	Text    string  `json:"text"`
-	Score   float64 `json:"score"`
+	N          int     `json:"n"`
+	DocumentID int64   `json:"document_id"`
+	Source     string  `json:"source"`
+	Heading    string  `json:"heading"`
+	Text       string  `json:"text"`
+	Score      float64 `json:"score"`
 }
 
 type askRequest struct {

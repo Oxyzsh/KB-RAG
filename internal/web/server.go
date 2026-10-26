@@ -91,6 +91,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /logout", s.handleLogout)
 	api.HandleFunc("GET /stats", s.handleStats)
 	api.HandleFunc("GET /documents", s.handleListDocuments)
+	api.HandleFunc("GET /documents/{id}/preview", s.handleDocumentPreview)
+	api.HandleFunc("GET /documents/{id}/raw", s.handleDocumentRaw)
 	api.HandleFunc("POST /documents", s.requireRoles(s.handleUploadDocument, "admin", "editor"))
 	api.HandleFunc("DELETE /documents/{id}", s.requireRoles(s.handleDeleteDocument, "admin", "editor"))
 	api.HandleFunc("POST /documents/{id}/reingest", s.requireRoles(s.handleReingestDocument, "admin", "editor"))

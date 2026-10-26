@@ -82,6 +82,7 @@ func (s *Store) MarkFailed(ctx, tenantID, path, title, hash, msg string) error
 - `MarkFailed` 只更新文档状态与错误，**保留旧片段**；`status=failed` 的文档不参与检索，但会在下次 ingest 时重试。
 - 源文件删除不会自动清理记录（第一期没有 prune）。
 - `ListDocuments`：按 `updated_at DESC, id DESC` 返回本租户文档摘要，并统计每个文档的片段数。
+- `ListDocumentChunks`：按 `seq` 返回本租户某文档的全部片段文本，供引用来源预览使用。
 - `GetDocumentByID` / `DeleteDocument`：按 `(tenant_id, id)` 查询与删除。删除只移除数据库记录，`chunks` 通过外键级联删除；源文件不受影响。跨租户统一表现为“不存在”。
 
 ## 账号、租户与会话

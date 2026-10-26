@@ -79,6 +79,12 @@ type DocumentSummary struct {
 	Chunks    int
 }
 
+type ChunkText struct {
+	Seq     int
+	Heading string
+	Text    string
+}
+
 var ErrDocumentNotFound = errors.New("文档不存在")
 
 func Open(path string) (*Store, error) {
@@ -475,6 +481,25 @@ func (s *Store) GetDocumentSummaryByID(ctx context.Context, tenantID, id int64) 
 		return DocumentSummary{}, false, err
 	}
 	return d, true, nil
+}
+
+func (s *Store) ListDocumentChunks(ctx context.Context, tenantID, docID int64) ([]ChunkText, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT c.seq,c.heading,c.text
+		FROM chunks c JOIN documents d ON d.id=c.doc_id
+		WHERE d.id=? AND d.tenant_id=? ORDER BY c.seq`, docID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChunkText
+	for rows.Next() {
+		var c ChunkText
+		if err := rows.Scan(&c.Seq, &c.Heading, &c.Text); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetDocumentByID(ctx context.Context, tenantID, id int64) (DocumentInfo, bool, error) {

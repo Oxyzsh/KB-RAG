@@ -4,6 +4,7 @@ import type {
   Citation,
   CreateTenantResponse,
   DocumentListResponse,
+  DocumentPreview,
   ErrorBody,
   JobResponse,
   LoginResponse,
@@ -116,6 +117,43 @@ export function getStats(): Promise<Stats> {
 
 export function listDocuments(): Promise<DocumentListResponse> {
   return request<DocumentListResponse>('/documents')
+}
+
+export function getDocumentPreview(id: number): Promise<DocumentPreview> {
+  return request<DocumentPreview>(`/documents/${id}/preview`)
+}
+
+export async function fetchDocumentRaw(id: number): Promise<Blob> {
+  const headers = new Headers()
+  const token = getToken()
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+    const tenant = getTenantOverride()
+    if (tenant) {
+      headers.set('X-Tenant', tenant)
+    }
+  }
+  const res = await fetch(`/api/documents/${id}/raw`, { headers })
+  if (!res.ok) {
+    let message = `请求失败（HTTP ${res.status}）`
+    try {
+      const data = (await res.json()) as ErrorBody
+      if (data?.error) {
+        message = data.error
+      }
+    } catch {
+      // 保持默认错误信息
+    }
+    if (res.status === 401) {
+      clearToken()
+      clearTenantOverride()
+      if (!window.location.hash.startsWith('#/login')) {
+        window.location.hash = '#/login'
+      }
+    }
+    throw new ApiError(res.status, message)
+  }
+  return res.blob()
 }
 
 export function uploadDocument(file: File): Promise<UploadResponse> {
