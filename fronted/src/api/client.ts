@@ -1,9 +1,11 @@
 import type {
   AskResponse,
   AuditListResponse,
+  Citation,
   CreateTenantResponse,
   DocumentListResponse,
   ErrorBody,
+  JobResponse,
   LoginResponse,
   Role,
   SessionResponse,
@@ -130,11 +132,144 @@ export function reingestDocument(id: number): Promise<UploadResponse> {
   return request<UploadResponse>(`/documents/${id}/reingest`, { method: 'POST' })
 }
 
+export function uploadDocumentJob(file: File): Promise<JobResponse> {
+  const form = new FormData()
+  form.append('file', file)
+  return request<JobResponse>('/jobs/documents', { method: 'POST', body: form })
+}
+
+export function reingestDocumentJob(id: number): Promise<JobResponse> {
+  return request<JobResponse>(`/jobs/documents/${id}/reingest`, { method: 'POST' })
+}
+
+export function getJob(id: number): Promise<JobResponse> {
+  return request<JobResponse>(`/jobs/${id}`)
+}
+
+export function cancelJob(id: number): Promise<void> {
+  return request<void>(`/jobs/${id}`, { method: 'DELETE' })
+}
+
 export function ask(question: string, topK: number): Promise<AskResponse> {
   return request<AskResponse>('/ask', {
     method: 'POST',
     body: JSON.stringify({ question, top_k: topK }),
   })
+}
+
+export interface AskStreamHandlers {
+  onCitations?: (citations: Citation[]) => void
+  onDelta?: (text: string) => void
+  onDone?: (answer: string) => void
+  onError?: (message: string) => void
+}
+
+export async function askStream(
+  question: string,
+  topK: number,
+  handlers: AskStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers = new Headers()
+  const token = getToken()
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+    const tenant = getTenantOverride()
+    if (tenant) {
+      headers.set('X-Tenant', tenant)
+    }
+  }
+  headers.set('Content-Type', 'application/json')
+
+  const res = await fetch('/api/ask/stream', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ question, top_k: topK }),
+    signal,
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    let data: unknown = null
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = null
+    }
+    if (res.status === 401) {
+      clearToken()
+      clearTenantOverride()
+      if (!window.location.hash.startsWith('#/login')) {
+        window.location.hash = '#/login'
+      }
+    }
+    const message = (data as ErrorBody | null)?.error ?? `请求失败（HTTP ${res.status}）`
+    throw new ApiError(res.status, message)
+  }
+  if (!res.body) {
+    throw new ApiError(502, '流式响应不可用')
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const dispatch = (raw: string) => {
+    let event = 'message'
+    const dataLines: string[] = []
+    for (const line of raw.split('\n')) {
+      if (line.startsWith('event:')) {
+        event = line.slice(6).trim()
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trim())
+      }
+    }
+    if (!dataLines.length) {
+      return
+    }
+    let payload: unknown
+    try {
+      payload = JSON.parse(dataLines.join('\n'))
+    } catch {
+      return
+    }
+    switch (event) {
+      case 'citations':
+        handlers.onCitations?.(payload as Citation[])
+        break
+      case 'delta':
+        handlers.onDelta?.((payload as { text: string }).text)
+        break
+      case 'done':
+        handlers.onDone?.((payload as { answer: string }).answer)
+        break
+      case 'error':
+        handlers.onError?.((payload as { error: string }).error)
+        break
+    }
+  }
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      buffer += decoder.decode(value, { stream: true })
+      let index = buffer.indexOf('\n\n')
+      while (index >= 0) {
+        const raw = buffer.slice(0, index)
+        buffer = buffer.slice(index + 2)
+        dispatch(raw)
+        index = buffer.indexOf('\n\n')
+      }
+    }
+    buffer += decoder.decode()
+    if (buffer.trim()) {
+      dispatch(buffer)
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 export function listUsers(): Promise<UserListResponse> {

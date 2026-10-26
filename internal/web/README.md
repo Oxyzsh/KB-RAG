@@ -45,10 +45,15 @@ X-Tenant: <租户 slug>
 | GET | `/api/session` | 登录 | 当前用户/租户/角色 |
 | GET | `/api/stats` | 登录 | 本租户文档/片段/模型/数据量 |
 | GET | `/api/documents` | 登录 | 本租户文档列表 |
-| POST | `/api/documents` | admin/editor | multipart 字段 `file`，上传并入库 |
+| POST | `/api/documents` | admin/editor | multipart 字段 `file`，同步上传并入库 |
 | DELETE | `/api/documents/{id}` | admin/editor | 只删索引，源文件保留 |
-| POST | `/api/documents/{id}/reingest` | admin/editor | 重试/重新入库 |
+| POST | `/api/documents/{id}/reingest` | admin/editor | 同步重试/重新入库 |
 | POST | `/api/ask` | 登录 | `{"question":"...","top_k":8}` |
+| POST | `/api/ask/stream` | 登录 | SSE 流式问答 |
+| POST | `/api/jobs/documents` | admin/editor | 异步上传，返回 202 与任务 |
+| POST | `/api/jobs/documents/{id}/reingest` | admin/editor | 异步重试，返回 202 |
+| GET | `/api/jobs/{id}` | admin/editor | 查询任务状态与阶段 |
+| DELETE | `/api/jobs/{id}` | admin/editor | 取消排队/运行中的任务 |
 | GET | `/api/users` | admin | 本租户用户列表 |
 | POST | `/api/users` | admin | 创建用户 |
 | PATCH | `/api/users/{id}` | admin | 修改角色或重置密码 |
@@ -62,12 +67,31 @@ X-Tenant: <租户 slug>
 - 所有 `/api/*` 响应带 `Cache-Control: no-store`。
 - 审计为 best-effort：写入失败只记应用日志，不阻断业务。
 
+## 流式问答
+
+`POST /api/ask/stream` 在检索成功后返回 `text/event-stream`：
+
+```text
+event: citations
+data: [{"n":1,"source":"a.md",...}]
+
+event: delta
+data: {"text":"增量文本"}
+
+event: done
+data: {"answer":"完整答案","generated":true}
+```
+
+生成失败时发送 `event: error`；客户端中断会取消上游生成。检索阶段失败仍返回普通 JSON 错误（400/409/502）。
+
 ## 上传
 
 - 允许 `.md` `.markdown` `.txt` `.docx` `.pdf`；
-- 保存到 `web.upload_dir/<随机目录>/<安全文件名>`；
-- 同步入库；解析/嵌入失败时文档标记 `failed`，文件保留，可重试；
-- 删除文档不删除源文件。
+- 同步接口保存到 `web.upload_dir/<随机目录>/<安全文件名>` 并立即入库；
+- 异步接口 `POST /api/jobs/documents` 返回 202，由单 worker 串行处理，阶段写入 `jobs.stage`；
+- 任务状态：`queued` / `running` / `done` / `failed` / `canceled`；服务重启时将 `running` 标记失败，`queued` 会继续处理；
+- 解析/嵌入失败时文档标记 `failed`，文件保留，可重试；
+- 删除文档不删除源文件；任务记录保留 7 天后清理。
 
 ## 测试
 

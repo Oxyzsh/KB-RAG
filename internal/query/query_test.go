@@ -49,6 +49,19 @@ func (f *fakeLLM) Chat(ctx context.Context, messages []llm.Message) (string, err
 	return f.answer, f.err
 }
 
+func (f *fakeLLM) ChatStream(ctx context.Context, messages []llm.Message, onDelta func(string) error) error {
+	f.messages = messages
+	if f.err != nil {
+		return f.err
+	}
+	for _, r := range f.answer {
+		if err := onDelta(string(r)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func TestAskBuildsPromptAndReturnsAnswer(t *testing.T) {
 	baseDir := t.TempDir()
 	path := filepath.Join(baseDir, "docs", "人事制度.md")
@@ -197,6 +210,38 @@ func TestWithTenantDoesNotMutateOriginal(t *testing.T) {
 	}
 	if original.TenantID != 1 {
 		t.Fatalf("原 Service 被修改: %d", original.TenantID)
+	}
+}
+
+func TestGenerateStream(t *testing.T) {
+	svc := &Service{
+		Embedder:   &fakeEmbedder{vector: []float32{1, 0, 0}},
+		Store:      &fakeStore{meta: store.EmbeddingMeta{Model: "bge-m3", Dim: 3}},
+		LLM:        &fakeLLM{answer: "答案[1]。"},
+		EmbedModel: "bge-m3",
+	}
+	var deltas []string
+	answer, err := svc.GenerateStream(context.Background(), "q", []store.Hit{{Path: "/docs/a.md", Text: "内容"}}, func(delta string) error {
+		deltas = append(deltas, delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream: %v", err)
+	}
+	if answer != "答案[1]。" || len(deltas) == 0 {
+		t.Fatalf("answer = %q, deltas = %v", answer, deltas)
+	}
+}
+
+func TestGenerateStreamError(t *testing.T) {
+	svc := &Service{
+		Embedder:   &fakeEmbedder{vector: []float32{1, 0, 0}},
+		Store:      &fakeStore{meta: store.EmbeddingMeta{Model: "bge-m3", Dim: 3}},
+		LLM:        &fakeLLM{err: errors.New("down")},
+		EmbedModel: "bge-m3",
+	}
+	if _, err := svc.GenerateStream(context.Background(), "q", []store.Hit{{Path: "/docs/a.md", Text: "内容"}}, nil); err == nil {
+		t.Fatal("期望生成失败")
 	}
 }
 

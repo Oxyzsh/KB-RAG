@@ -18,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = "3"
+const SchemaVersion = "4"
 
 type Store struct {
 	db   *sql.DB
@@ -128,7 +128,7 @@ func (s *Store) migrate() error {
 		if hasDocs {
 			return fmt.Errorf("数据库缺少 meta 表，无法确认版本；请恢复备份")
 		}
-		return s.initFreshV3(context.Background())
+		return s.initFreshV4(context.Background())
 	}
 	version, ok, err := s.metaGet("schema_version")
 	if err != nil {
@@ -142,13 +142,18 @@ func (s *Store) migrate() error {
 		if hasDocs {
 			return fmt.Errorf("数据库缺少 schema_version，无法确认版本；请恢复备份")
 		}
-		return s.initFreshV3(context.Background())
+		return s.initFreshV4(context.Background())
 	}
 	switch version {
 	case SchemaVersion:
 		return nil
+	case "3":
+		return s.migrateV3ToV4(context.Background())
 	case "2":
-		return s.migrateV2ToV3(context.Background())
+		if err := s.migrateV2ToV3(context.Background()); err != nil {
+			return err
+		}
+		return s.migrateV3ToV4(context.Background())
 	default:
 		return fmt.Errorf("数据库 schema 版本 %s 与程序 %s 不一致，请恢复备份或重新 ingest", version, SchemaVersion)
 	}

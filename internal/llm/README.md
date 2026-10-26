@@ -12,7 +12,10 @@ type Message struct {
 
 func New(baseURL, model, apiKey string) *Client
 func (c *Client) Chat(ctx context.Context, messages []Message) (string, error)
+func (c *Client) ChatStream(ctx context.Context, messages []Message, onDelta func(string) error) error
 ```
+
+`ChatStream` 发送 `stream: true`，按 SSE 的 `data:` 行解析增量并回调；收到 `[DONE]` 或流结束时返回。`onDelta` 返回错误会立即中止读取。流式请求单独使用 5 分钟超时。
 
 ## 请求
 

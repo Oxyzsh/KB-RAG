@@ -11,7 +11,7 @@ func Open(path string) (*Store, error)
 - 自动创建库目录；
 - 启用 WAL、`busy_timeout=5000`、外键；
 - 单连接（`SetMaxOpenConns(1)`），避免进程内写锁竞争；
-- 校验 `meta.schema_version`，当前为 `3`。v2 库会自动迁移到 v3（文档归入 `default` 租户）；其他版本直接报错，提示恢复备份。
+- 校验 `meta.schema_version`，当前为 `4`。v2/v3 库会自动迁移到 v4（v2 先迁到 v3，再新增 `jobs` 表）；其他版本直接报错，提示恢复备份。
 
 ## 表结构
 
@@ -45,6 +45,11 @@ documents(
 chunks(
   id, doc_id REFERENCES documents(id) ON DELETE CASCADE,
   seq, heading, text, vector BLOB, dim
+)
+
+jobs(
+  id, tenant_id, user_id, username, action, path, name,
+  status, stage, chunks, error, ip, created_at, updated_at
 )
 
 meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)
@@ -107,6 +112,20 @@ func (s *Store) ListAudit(ctx, filter AuditFilter) ([]AuditEntry, int, error)
 - `AuditFilter.TenantID` 为空表示全局查询（仅超级管理员接口使用）。
 - 分页默认 50、上限 200；支持按动作与时间范围过滤。
 
+## 异步任务
+
+```go
+func (s *Store) CreateJob(ctx, job Job) (Job, error)
+func (s *Store) NextQueuedJob(ctx) (Job, bool, error)
+func (s *Store) UpdateJob(ctx, id, status, stage string, chunks int, errMsg string) error
+func (s *Store) CancelQueuedJob(ctx, tenantID, id int64) (bool, error)
+```
+
+- 状态：`queued` / `running` / `done` / `failed` / `canceled`。
+- `NextQueuedJob` 在事务内把最老的排队任务置为 `running`，保证单 worker 串行消费。
+- 服务启动时 `MarkInterruptedJobs` 把残留 `running` 标记失败，`queued` 保留继续处理。
+- 已完成/失败/取消的任务保留 7 天后由 `DeleteOldJobs` 清理。
+
 ## 检索
 
 ```go
@@ -135,7 +154,8 @@ func (s *Store) Stats(ctx, tenantID int64) (Stats, error)
 - 替换后 top-k 排序与旧片段删除；
 - 文档生命周期与失败状态；
 - 模型/维度/chunk_size 不一致拒绝；
-- v2→v3 迁移保留数据、级联、唯一约束与失败回滚；未知版本拒绝；
+- v2→v4、v3→v4 迁移保留数据、级联、唯一约束与失败回滚；未知版本拒绝；
+- 异步任务创建、状态推进、取消、重启中断标记与旧任务清理；
 - 租户隔离：同路径跨租户、检索/统计/删除/跨租户 404；
 - 用户 CRUD、最后管理员保护、超级管理员保护、会话过期与密码重置失效；
 - 审计插入、分页、动作过滤与 NULL 租户；

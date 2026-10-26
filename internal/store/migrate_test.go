@@ -67,7 +67,7 @@ func createV2DB(t *testing.T, path string, withExtraTable bool) {
 	}
 }
 
-func TestOpenFreshCreatesV3(t *testing.T) {
+func TestOpenFreshCreatesV4(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -77,7 +77,7 @@ func TestOpenFreshCreatesV3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.SchemaVersion != "3" {
+	if meta.SchemaVersion != "4" {
 		t.Fatalf("schema = %q", meta.SchemaVersion)
 	}
 	tenant, ok, err := s.TenantBySlug(context.Background(), "default")
@@ -88,9 +88,13 @@ func TestOpenFreshCreatesV3(t *testing.T) {
 	if err := s.db.QueryRow(`PRAGMA foreign_keys`).Scan(&fk); err != nil || fk != 1 {
 		t.Fatalf("foreign_keys = %d, err=%v", fk, err)
 	}
+	var jobs int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jobs'`).Scan(&jobs); err != nil || jobs != 1 {
+		t.Fatalf("jobs table = %d, err=%v", jobs, err)
+	}
 }
 
-func TestMigrateV2ToV3PreservesData(t *testing.T) {
+func TestMigrateV2ToV4PreservesData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v2.db")
 	createV2DB(t, path, false)
 
@@ -104,7 +108,7 @@ func TestMigrateV2ToV3PreservesData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.SchemaVersion != "3" || meta.Model != "bge-m3" || meta.Dim != 3 {
+	if meta.SchemaVersion != "4" || meta.Model != "bge-m3" || meta.Dim != 3 {
 		t.Fatalf("meta = %+v", meta)
 	}
 	tenant, ok, err := s.TenantBySlug(context.Background(), "default")
@@ -191,7 +195,7 @@ func TestMigrateV2ToV3RollsBackOnConflict(t *testing.T) {
 }
 
 func TestMigrateUnknownVersionFails(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v4.db")
+	path := filepath.Join(t.TempDir(), "v5.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +207,7 @@ func TestMigrateUnknownVersionFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE meta SET value='4' WHERE key='schema_version'`); err != nil {
+	if _, err := db.Exec(`UPDATE meta SET value='5' WHERE key='schema_version'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -211,6 +215,56 @@ func TestMigrateUnknownVersionFails(t *testing.T) {
 	}
 	if _, err := Open(path); err == nil {
 		t.Fatal("未知版本应报错")
+	}
+}
+
+func TestMigrateV3ToV4AddsJobs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v3.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InitMeta("bge-m3", 500); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDim(2); err != nil {
+		t.Fatal(err)
+	}
+	tenant, ok, err := s.TenantBySlug(context.Background(), "default")
+	if err != nil || !ok {
+		t.Fatalf("default tenant: ok=%v err=%v", ok, err)
+	}
+	if err := s.ReplaceDocument(context.Background(), tenant.ID, "/docs/a.md", "A", "h", []ChunkInput{
+		{Seq: 0, Text: "内容", Vector: []float32{1, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DROP TABLE jobs`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE meta SET value='3' WHERE key='schema_version'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open v3: %v", err)
+	}
+	defer s2.Close()
+	meta, err := s2.Meta()
+	if err != nil || meta.SchemaVersion != "4" {
+		t.Fatalf("meta = %+v, err=%v", meta, err)
+	}
+	var jobs int
+	if err := s2.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jobs'`).Scan(&jobs); err != nil || jobs != 1 {
+		t.Fatalf("jobs table = %d, err=%v", jobs, err)
+	}
+	list, err := s2.ListDocuments(context.Background(), tenant.ID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("documents = %+v, err=%v", list, err)
 	}
 }
 

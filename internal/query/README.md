@@ -22,6 +22,7 @@ func (s *Service) Ask(ctx context.Context, question string) (Result, error)
 
 - `Ask` 使用 Service 的固定 `TopK`，供 CLI 使用；
 - `AskWithTopK(ctx, question, topK)` 允许按请求指定 top-k，供 Web API 使用；
+- `Retrieve` 只做校验、问题嵌入与检索；`Generate` / `GenerateStream` 负责生成，供 SSE 接口先返回引用再流式输出；
 - `TenantID` 决定检索哪个租户；`WithTenant(id)` 返回设置了租户的浅拷贝，供 Web 按当前登录用户隔离；
 - `ErrEmptyStore` / `ErrNoResults` / `ErrModelMismatch` 用于 API 区分 409 响应。
 
