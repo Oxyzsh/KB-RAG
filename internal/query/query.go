@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -30,6 +31,12 @@ type LLM interface {
 	Chat(ctx context.Context, messages []llm.Message) (string, error)
 }
 
+var (
+	ErrEmptyStore    = errors.New("知识库为空")
+	ErrNoResults     = errors.New("知识库中未找到相关片段")
+	ErrModelMismatch = errors.New("嵌入模型不一致")
+)
+
 type Service struct {
 	Embedder   Embedder
 	Store      Store
@@ -47,6 +54,10 @@ type Result struct {
 }
 
 func (s *Service) Ask(ctx context.Context, question string) (Result, error) {
+	return s.AskWithTopK(ctx, question, s.TopK)
+}
+
+func (s *Service) AskWithTopK(ctx context.Context, question string, topK int) (Result, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return Result{}, fmt.Errorf("问题不能为空")
@@ -57,10 +68,10 @@ func (s *Service) Ask(ctx context.Context, question string) (Result, error) {
 		return Result{}, fmt.Errorf("读取库元信息: %w", err)
 	}
 	if meta.Model == "" || meta.Dim <= 0 {
-		return Result{}, fmt.Errorf("知识库为空，请先执行 ingest")
+		return Result{}, fmt.Errorf("%w，请先执行 ingest", ErrEmptyStore)
 	}
 	if s.EmbedModel != meta.Model {
-		return Result{}, fmt.Errorf("嵌入模型不一致：库内为 %q，配置为 %q", meta.Model, s.EmbedModel)
+		return Result{}, fmt.Errorf("%w：库内为 %q，配置为 %q", ErrModelMismatch, meta.Model, s.EmbedModel)
 	}
 	vectors, err := s.Embedder.Embed(ctx, []string{question})
 	if err != nil {
@@ -72,7 +83,6 @@ func (s *Service) Ask(ctx context.Context, question string) (Result, error) {
 	if len(vectors[0]) != meta.Dim {
 		return Result{}, fmt.Errorf("问题嵌入维度为 %d，库内为 %d", len(vectors[0]), meta.Dim)
 	}
-	topK := s.TopK
 	if topK <= 0 {
 		topK = 8
 	}
@@ -81,7 +91,7 @@ func (s *Service) Ask(ctx context.Context, question string) (Result, error) {
 		return Result{}, fmt.Errorf("检索失败: %w", err)
 	}
 	if len(hits) == 0 {
-		return Result{}, fmt.Errorf("知识库中未找到相关片段，请先执行 ingest")
+		return Result{}, fmt.Errorf("%w，请先执行 ingest", ErrNoResults)
 	}
 	if s.Logger != nil {
 		ids := make([]int64, len(hits))

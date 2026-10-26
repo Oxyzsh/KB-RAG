@@ -24,13 +24,15 @@ func (f *fakeEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, 
 }
 
 type fakeStore struct {
-	meta store.EmbeddingMeta
-	hits []store.Hit
-	err  error
+	meta    store.EmbeddingMeta
+	hits    []store.Hit
+	err     error
+	gotTopK int
 }
 
 func (f *fakeStore) Meta() (store.EmbeddingMeta, error) { return f.meta, nil }
 func (f *fakeStore) Search(ctx context.Context, query []float32, topK int) ([]store.Hit, error) {
+	f.gotTopK = topK
 	return f.hits, f.err
 }
 
@@ -151,5 +153,44 @@ func TestFormatResult(t *testing.T) {
 	hitsOut := FormatHits(result.Hits, baseDir)
 	if !strings.Contains(hitsOut, "检索片段：") || !strings.Contains(hitsOut, "docs/a.md") {
 		t.Errorf("FormatHits = %q", hitsOut)
+	}
+}
+
+func TestAskWithTopK(t *testing.T) {
+	st := &fakeStore{meta: store.EmbeddingMeta{Model: "bge-m3", Dim: 3}, hits: []store.Hit{{Path: "/docs/a.md", Text: "内容"}}}
+	svc := &Service{
+		Embedder:   &fakeEmbedder{vector: []float32{1, 0, 0}},
+		Store:      st,
+		LLM:        &fakeLLM{answer: "答案"},
+		EmbedModel: "bge-m3",
+		TopK:       8,
+	}
+	if _, err := svc.AskWithTopK(context.Background(), "q", 3); err != nil {
+		t.Fatalf("AskWithTopK: %v", err)
+	}
+	if st.gotTopK != 3 {
+		t.Fatalf("topK = %d, want 3", st.gotTopK)
+	}
+}
+
+func TestAskSentinelErrors(t *testing.T) {
+	empty := &Service{
+		Embedder:   &fakeEmbedder{vector: []float32{1, 0, 0}},
+		Store:      &fakeStore{meta: store.EmbeddingMeta{}},
+		LLM:        &fakeLLM{answer: "x"},
+		EmbedModel: "bge-m3",
+	}
+	if _, err := empty.Ask(context.Background(), "q"); !errors.Is(err, ErrEmptyStore) {
+		t.Fatalf("空库错误 = %v", err)
+	}
+
+	mismatch := &Service{
+		Embedder:   &fakeEmbedder{vector: []float32{1, 0, 0}},
+		Store:      &fakeStore{meta: store.EmbeddingMeta{Model: "other", Dim: 3}},
+		LLM:        &fakeLLM{answer: "x"},
+		EmbedModel: "bge-m3",
+	}
+	if _, err := mismatch.Ask(context.Background(), "q"); !errors.Is(err, ErrModelMismatch) {
+		t.Fatalf("模型不一致错误 = %v", err)
 	}
 }
